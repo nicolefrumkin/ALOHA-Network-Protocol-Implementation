@@ -3,7 +3,9 @@
 ## Overview
 This project implements a simple network communication system where multiple servers send files through a shared channel using an ALOHA-like protocol. The system handles collision detection and uses exponential backoff for retry attempts.
 
-<img src="./images/illustration.png" alt="server channel illustration" width="400"/>
+<p align="center">
+   <img src="./images/illustration.png" alt="server channel illustration" width="60$"/>
+</p>
 
 ## Files
 
