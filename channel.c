@@ -79,8 +79,6 @@ int main(int argc, char *argv[])
     // Connection was recieved
     while (1)
     {
-        if (foef(stdin)) // if ctrl+z is pressed, exit the program
-            break;
         read_fds = master_set;
         // Set the timeout for select
         struct timeval timeout;
@@ -189,7 +187,7 @@ int main(int argc, char *argv[])
     Output *ptr = head->next;
     while (ptr)
     {
-        fprintf(stderr, "From %s port %d: %d frames, %d collisions, average bandwidth: %d Mbps\n",
+        fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %d Mbps\n",
                 ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
         ptr = ptr->next;
     }

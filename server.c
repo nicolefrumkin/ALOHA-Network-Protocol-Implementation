@@ -92,6 +92,8 @@ int main(int argc, char *argv[])
     DWORD start_time = GetTickCount();
     DWORD curr_time = 0;
     int recieved_num = 1;
+    int dummy;
+
     while (!feof(f))
     {
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
@@ -160,18 +162,24 @@ int main(int argc, char *argv[])
         num_frames++;
         total_transmissions++;
     }
+    printf("Sent file, press ctrl+z");
+    while (scanf("%d", &dummy) != EOF)
+    {
+        // Just wait, don't do anything
+    }
+
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
     out->file_size = num_frames * s1->frame_size;
     out->total_time = GetTickCount() - start_time;
     out->avg_transmissions = (double)total_transmissions / num_frames;
     out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
-    fprintf(stderr, "Sent file %s\n", out->file_name);
+    fprintf(stderr, "\nSent file %s\n", out->file_name);
     fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(\n");
     fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
     fprintf(stderr, "Transmissions/frame: average %.2f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
-    fprintf(stderr, "Average bandwidth: %.2f Mbps\n", out->avg_bw);
+    fprintf(stderr, "Average bandwidth: %.2f Mbps\n\n", out->avg_bw);
     fclose(f);
     free(frame);
     free(received);
