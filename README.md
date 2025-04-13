@@ -19,8 +19,8 @@ This project simulates a simple TCP file transfer system between a server and a 
 Make sure you have a Windows environment with Winsock2.
 
 ```bash
-gcc channel.c -o channel -lws2_32
-gcc server.c -o server -lws2_32
+gcc channel.c -o channel.exe -lws2_32
+gcc server.c -o server.exe -lws2_32
 ```
 
 ### Run
