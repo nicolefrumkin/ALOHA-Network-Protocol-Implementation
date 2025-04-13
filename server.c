@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
+#include <stdlib.h>
+#include <stdint.h>
 
 typedef struct Input
 {
@@ -28,7 +30,9 @@ typedef struct Output
 
 void exponential_backoff(int k, int slot_time, int *seed)
 {
-    int r = rand(seed) % (1 << k);
+    srand(*seed);
+    *seed = rand();
+    int r = rand() % (1 << k);
     Sleep(r * slot_time);
 }
 
@@ -78,7 +82,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     char *frame = (char *)malloc(s1->frame_size);
-    char *recived = (char *)malloc(s1->frame_size);
+    char *received = (char *)malloc(s1->frame_size);
     int not_send = 1;
     int collisions = 0;
     int transmissions = 0;
@@ -86,18 +90,38 @@ int main(int argc, char *argv[])
     int num_frames = 0;
     out->success = 1;
     DWORD start_time = GetTickCount();
-    DWORD curr_time = 0; 
+    DWORD curr_time = 0;
+    int recieved_num = 1;
     while (!feof(f))
     {
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
+        char *packet = malloc(16 + read_bytes);
+        memcpy(packet, "\xAA\xBB\xCC\xDD\xEE\xFF", 6);
+
+        // Append src MAC (6 bytes)
+        memcpy(packet + 6, "\x11\x22\x33\x44\x55\x66", 6);
+
+        // Append ethertype (2 bytes, let's say 0x0800)
+        packet[12] = 0x08;
+        packet[13] = 0x00;
+
+        // Append payload length (2 bytes, big-endian)
+        packet[14] = (read_bytes >> 8) & 0xFF;
+        packet[15] = read_bytes & 0xFF;
+
+        // Append actual payload
+        memcpy(packet + 16, frame, read_bytes);
+
         while (not_send)
         {
             DWORD start_frame_time = GetTickCount();
-            send(sockfd, frame, read_bytes, 0);
-            while (recv(sockfd, recived, s1->frame_size, 0)<= 0)
+            send(sockfd, packet, read_bytes, 0);
+            recieved_num = recv(sockfd, received, s1->frame_size, 0);
+            while (recieved_num <= 0)
             {
                 curr_time = GetTickCount();
-                if (((curr_time - start_frame_time) > (s1->timeout) * 1000)) {
+                if (((curr_time - start_frame_time) > (s1->timeout) * 1000))
+                {
                     collisions++;
                     transmissions++;
                     total_transmissions++;
@@ -105,13 +129,15 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
+            if (recieved_num <= 0)
+                break;
             curr_time = GetTickCount();
-            if (!(strcmp(recived, frame) || ((curr_time - start_frame_time) > (s1->timeout) * 1000)))
+            if (!(strcmp(received, packet) || ((curr_time - start_frame_time) > (s1->timeout) * 1000)))
             {
                 collisions++;
                 transmissions++;
                 total_transmissions++;
-                exponential_backoff(collisions, s1->slot_time, s1->seed);
+                exponential_backoff(collisions, s1->slot_time, &s1->seed);
             }
             if (collisions >= 10)
             {
@@ -124,7 +150,9 @@ int main(int argc, char *argv[])
                 not_send = 0;
             }
         }
-        if (!(out->success)) break;
+        free(packet);
+        if (!(out->success) || recieved_num <= 0)
+            break;
         not_send = 1;
         if (transmissions > out->max_transmissions)
             out->max_transmissions = transmissions;
@@ -134,19 +162,19 @@ int main(int argc, char *argv[])
     }
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
-    out->file_size = num_frames*s1->frame_size;
-    out->total_time = GetTickCount()-start_time;
+    out->file_size = num_frames * s1->frame_size;
+    out->total_time = GetTickCount() - start_time;
     out->avg_transmissions = (double)total_transmissions / num_frames;
-    out->avg_bw = (double) (num_frames*s1->frame_size*8)/(out->total_time*0.001);
-    fprintf(stderr,"Sent file %s\n", out->file_name);
-    fprintf(stderr,"Result: %s \n", out->success? "Success :)" : "Failure :(");
-    fprintf(stderr, "File size: %d Bytes (%d frames)\n",out->file_size, out->num_of_packets);
-    fprintf(stderr, "Total transfer time: %d milliseconds", out->total_time);
+    out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
+    fprintf(stderr, "Sent file %s\n", out->file_name);
+    fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(\n");
+    fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
+    fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
     fprintf(stderr, "Transmissions/frame: average %.2f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
-    fprintf(stderr, "Average bandwidth: %.2f Mbps", out->avg_bw);
+    fprintf(stderr, "Average bandwidth: %.2f Mbps\n", out->avg_bw);
     fclose(f);
     free(frame);
-    free(recived);
+    free(received);
     free(s1);
     free(out);
     return 0;
