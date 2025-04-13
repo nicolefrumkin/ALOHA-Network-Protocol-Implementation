@@ -28,8 +28,8 @@ typedef struct Output
 
 void exponential_backoff(int k, int slot_time, int *seed)
 {
-    int r = rand_r(seed) % (1 << k);
-    usleep(r * slot_time * 1000);
+    int r = rand(seed) % (1 << k);
+    Sleep(r * slot_time);
 }
 
 int main(int argc, char *argv[])
@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
         free(out);
         return 1;
     }
-    FILE *f = fopen(s1->file_name, 'rb');
+    FILE *f = fopen(s1->file_name, "rb");
     if (!f)
     {
         printf("Failed to open file");
@@ -86,6 +86,7 @@ int main(int argc, char *argv[])
     int num_frames = 0;
     out->success = 1;
     DWORD start_time = GetTickCount();
+    DWORD curr_time = 0; 
     while (!feof(f))
     {
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
@@ -93,11 +94,19 @@ int main(int argc, char *argv[])
         {
             DWORD start_frame_time = GetTickCount();
             send(sockfd, frame, read_bytes, 0);
-            while (recv(sockfd, recived, sizeof(recived), 0) <= 0)
+            while (recv(sockfd, recived, s1->frame_size, 0)<= 0)
             {
+                curr_time = GetTickCount();
+                if (((curr_time - start_frame_time) > (s1->timeout) * 1000)) {
+                    collisions++;
+                    transmissions++;
+                    total_transmissions++;
+                    exponential_backoff(collisions, s1->slot_time, &s1->seed);
+                    break;
+                }
             }
-            DWORD curr_time = GetTickCount();
-            if (!(strcmp(recived, frame)) || ((curr_time - start_frame_time) > (s1->timeout) * 1000))
+            curr_time = GetTickCount();
+            if (!(strcmp(recived, frame) || ((curr_time - start_frame_time) > (s1->timeout) * 1000)))
             {
                 collisions++;
                 transmissions++;
@@ -133,7 +142,7 @@ int main(int argc, char *argv[])
     fprintf(stderr,"Result: %s \n", out->success? "Success :)" : "Failure :(");
     fprintf(stderr, "File size: %d Bytes (%d frames)\n",out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds", out->total_time);
-    fprintf(stderr, "Transmissions/frame: average %.2f, maximum %d",out->avg_bw, out->max_transmissions);
+    fprintf(stderr, "Transmissions/frame: average %.2f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
     fprintf(stderr, "Average bandwidth: %.2f Mbps", out->avg_bw);
     fclose(f);
     free(frame);
