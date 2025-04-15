@@ -158,7 +158,9 @@ int main(int argc, char *argv[])
         while (not_send && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
+            Sleep(1000);
             send(sockfd, packet, read_bytes, 0);
+            transmissions++;
             recieved_num = recv(sockfd, received, s1->frame_size, 0);
             while (recieved_num <= 0)
             {
@@ -167,6 +169,7 @@ int main(int argc, char *argv[])
                 {
                     collisions++;
                     transmissions++;
+                    printf("(1) transmissions: %d\n", transmissions);
                     total_transmissions++;
                     exponential_backoff(collisions, s1->slot_time, &s1->seed);
                     break;
@@ -179,6 +182,8 @@ int main(int argc, char *argv[])
             {
                 collisions++;
                 transmissions++;
+                printf("(2) transmissions: %d\n", transmissions);
+
                 total_transmissions++;
                 exponential_backoff(collisions, s1->slot_time, &s1->seed);
             }
@@ -197,12 +202,14 @@ int main(int argc, char *argv[])
         if (!(out->success) || recieved_num <= 0 || stop_flag)
             break;
         not_send = 1;
+        printf("(3) transmissions: %d\n", transmissions);
         if (transmissions > out->max_transmissions)
             out->max_transmissions = transmissions;
         transmissions = 0;
         num_frames++;
         total_transmissions++;
     }
+    printf("finished");
     // Wait for the monitoring thread to finish
     WaitForSingleObject(monitor_thread, INFINITE);
     CloseHandle(monitor_thread);
@@ -218,7 +225,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
     fprintf(stderr, "Transmissions/frame: average %.3f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
-    fprintf(stderr, "Average bandwidth: %.2f Mbps\n\n", out->avg_bw);
+    fprintf(stderr, "Average bandwidth: %.3f Mbps\n\n", out->avg_bw);
     fclose(f);
     free(frame);
     free(received);

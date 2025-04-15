@@ -21,7 +21,7 @@ typedef struct Output
     int port_num;
     int num_packets;
     int total_collisions;
-    int avg_bw;
+    double avg_bw;
     DWORD start_time;
     DWORD end_time;
     int send_in_slot;
@@ -93,6 +93,7 @@ int main(int argc, char *argv[])
     FD_SET(tcp_s, &master_set); // Add the listening socket to the master set
 
     char buffer[HEADER_SIZE + 1]; // Buffer for incoming messages
+    uint32_t frame_size = 0;      // Size of the incoming frame
 
     // Connection was recieved
     while (1)
@@ -142,10 +143,10 @@ int main(int argc, char *argv[])
                     int header_received = recv(socket, buffer, HEADER_SIZE, 0);
                     if (header_received > 0)
                     {
-                        uint32_t frame_size = ((uint8_t)buffer[14] << 24) |
-                                              ((uint8_t)buffer[15] << 16) |
-                                              ((uint8_t)buffer[16] << 8) |
-                                              (uint8_t)buffer[17];
+                        frame_size = ((uint8_t)buffer[14] << 24) |
+                                     ((uint8_t)buffer[15] << 16) |
+                                     ((uint8_t)buffer[16] << 8) |
+                                     (uint8_t)buffer[17];
                         char *data_buffer = malloc(frame_size + 1);
                         if (!data_buffer)
                         {
@@ -174,7 +175,6 @@ int main(int argc, char *argv[])
                         int collisions = count_active(head->next); // Count active connections
                         if (collisions > 1)
                         {
-                            printf("NOISE\n"); // DEBUG
                             strcpy(data_buffer, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!\n");
                             Output *ptr = head->next;
                             while (ptr)
@@ -212,10 +212,11 @@ int main(int argc, char *argv[])
                         if (ptr)
                         {
                             ptr->end_time = GetTickCount();
-                            ptr->avg_bw = (ptr->num_packets * 8) / ((ptr->end_time - ptr->start_time) * 1000); // in bps
-                            fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
-                                    ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
+                            ptr->avg_bw = (double)(frame_size * ptr->num_packets * 8) / ((ptr->end_time - ptr->start_time) * 1000); // in bps
                         }
+
+                        fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
+                                ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
                         ptr->num_packets = 0;
                         ptr->total_collisions = 0;
                         ptr->send_in_slot = 0; // Reset send_in_slot for the next connection
