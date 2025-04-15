@@ -36,7 +36,6 @@ typedef struct Output
 void exponential_backoff(int k, int slot_time)
 {
     int r = rand() % (1 << k);
-    printf("waiting: %d", r * slot_time); // DEBUG
     Sleep(r * slot_time);
 }
 DWORD WINAPI monitor_ctrl_z(LPVOID param)
@@ -240,7 +239,7 @@ int main(int argc, char *argv[])
         while (not_sent && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-
+            Sleep(100);
             // Send the packet (header + payload)
             int send_result = send(sockfd, packet, HEADER_SIZE + read_bytes, 0);
             if (send_result == SOCKET_ERROR)
@@ -260,8 +259,7 @@ int main(int argc, char *argv[])
             if (recv_result == SOCKET_ERROR)
             {
                 int error = WSAGetLastError();
-                if (error == WSAETIMEDOUT ||
-                    ((curr_time - start_frame_time) > (s1->timeout * 1000)))
+                if (((curr_time - start_frame_time) > (s1->timeout * 1000)))
                 {
                     printf("Timeout occurred\n");
                     collisions++;
@@ -320,7 +318,6 @@ int main(int argc, char *argv[])
         if (!out->success || stop_flag)
             break;
 
-        printf("(3) transmissions: %d\n", transmissions);
         if (transmissions > out->max_transmissions)
             out->max_transmissions = transmissions;
         total_transmissions += transmissions;

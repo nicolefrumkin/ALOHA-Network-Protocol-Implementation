@@ -196,6 +196,8 @@ int main(int argc, char *argv[])
                 {
                     memset(buffer, 0, HEADER_SIZE + 1);
                     int header_received = recv(socket, buffer, HEADER_SIZE, 0);
+                    buffer[HEADER_SIZE] = '\0';
+
                     if (header_received > 0)
                     {
                         Output *ptr = head->next;
@@ -232,15 +234,15 @@ int main(int argc, char *argv[])
                         int collisions = count_active(head->next); // Count active connections
                         const char *noise = "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!";
                         int noise_len = (int)strlen(noise);
-                        
+
                         if (collisions > 1)
                         {
                             strncpy(data_buffer, noise, noise_len);
-                            data_buffer[noise_len] = '\0';         // Ensure null-termination
-                            bytes_received = noise_len + 1;        // Adjust sent length to match the noise
+                            data_buffer[noise_len] = '\0';  // Ensure null-termination
+                            bytes_received = noise_len + 1; // Adjust sent length to match the noise
                             ptr->total_collisions++;
                         }
-                        
+
                         for (u_int j = 0; j < master_set.fd_count; j++)
                         {
                             SOCKET out_socket = master_set.fd_array[j];
@@ -273,11 +275,14 @@ int main(int argc, char *argv[])
                         {
                             ptr->end_time = GetTickCount();
                             double elapsed_time = (ptr->end_time - ptr->start_time) / 1000.0; // in seconds
-                            
+
                             // Avoid division by zero
-                            if (elapsed_time > 0) {
+                            if (elapsed_time > 0)
+                            {
                                 ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / (elapsed_time * 1000000); // in Mbps
-                            } else {
+                            }
+                            else
+                            {
                                 ptr->avg_bw = 0;
                             }
                             fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
