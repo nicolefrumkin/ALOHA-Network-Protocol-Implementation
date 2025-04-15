@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
     char *received = (char *)malloc(s1->frame_size);
     int not_send = 1;
     int collisions = 0;
-    int transmissions = 0;
+
     int total_transmissions = 0;
     int num_frames = 0;
     out->success = 1;
@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
 
         // Append actual payload
         memcpy(packet + 18, frame, read_bytes);
-
+        int transmissions = 0;
         while (not_send && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
@@ -194,7 +194,6 @@ int main(int argc, char *argv[])
             }
             else
             {
-                total_transmissions++;
                 not_send = 0;
             }
         }
@@ -205,9 +204,9 @@ int main(int argc, char *argv[])
         printf("(3) transmissions: %d\n", transmissions);
         if (transmissions > out->max_transmissions)
             out->max_transmissions = transmissions;
+        total_transmissions = total_transmissions + transmissions;
         transmissions = 0;
         num_frames++;
-        total_transmissions++;
     }
     printf("finished");
     // Wait for the monitoring thread to finish
@@ -218,6 +217,7 @@ int main(int argc, char *argv[])
     out->file_name = s1->file_name;
     out->file_size = num_frames * s1->frame_size;
     out->total_time = GetTickCount() - start_time;
+    printf("\ntotal transmissions: %d\n", total_transmissions);
     out->avg_transmissions = (double)total_transmissions / num_frames;
     out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
     fprintf(stderr, "\nSent file %s\n", out->file_name);
