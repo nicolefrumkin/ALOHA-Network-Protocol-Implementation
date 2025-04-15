@@ -6,8 +6,7 @@
 #include <stdint.h>
 #include <conio.h>
 
-
-volatile int stop_flag = 0; //Shared flag to signal stop
+volatile int stop_flag = 0; // Shared flag to signal stop
 
 typedef struct Input
 {
@@ -69,8 +68,8 @@ int main(int argc, char *argv[])
 {
     Input *s1 = (Input *)malloc(sizeof(Input));
     Output *out = (Output *)malloc(sizeof(Output));
-    memset(out ,0, sizeof(Output));
-    memset(s1 ,0, sizeof(Input));
+    memset(out, 0, sizeof(Output));
+    memset(s1, 0, sizeof(Input));
 
     if (argc != 8)
     {
@@ -147,12 +146,14 @@ int main(int argc, char *argv[])
         packet[12] = 0x08;
         packet[13] = 0x00;
 
-        // Append payload length (2 bytes, big-endian)
-        packet[14] = (read_bytes >> 8) & 0xFF;
-        packet[15] = read_bytes & 0xFF;
+        // Append frame size (4 bytes, big-endian)
+        packet[14] = (s1->frame_size >> 24) & 0xFF;
+        packet[15] = (s1->frame_size >> 16) & 0xFF;
+        packet[16] = (s1->frame_size >> 8) & 0xFF;
+        packet[17] = s1->frame_size & 0xFF;
 
         // Append actual payload
-        memcpy(packet + 16, frame, read_bytes);
+        memcpy(packet + 18, frame, read_bytes);
 
         while (not_send && !stop_flag)
         {
@@ -202,9 +203,9 @@ int main(int argc, char *argv[])
         num_frames++;
         total_transmissions++;
     }
-   // Wait for the monitoring thread to finish
-   WaitForSingleObject(monitor_thread, INFINITE);
-   CloseHandle(monitor_thread);
+    // Wait for the monitoring thread to finish
+    WaitForSingleObject(monitor_thread, INFINITE);
+    CloseHandle(monitor_thread);
 
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
@@ -216,7 +217,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(\n");
     fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
-    fprintf(stderr, "Transmissions/frame: average %.2f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
+    fprintf(stderr, "Transmissions/frame: average %.3f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
     fprintf(stderr, "Average bandwidth: %.2f Mbps\n\n", out->avg_bw);
     fclose(f);
     free(frame);
