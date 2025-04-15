@@ -17,6 +17,7 @@ typedef struct Input
 typedef struct Output
 {
     SOCKET socket;
+    uint32_t frame_size;
     char *sender_address;
     int port_num;
     int num_packets;
@@ -93,7 +94,7 @@ int main(int argc, char *argv[])
     FD_SET(tcp_s, &master_set); // Add the listening socket to the master set
 
     char buffer[HEADER_SIZE + 1]; // Buffer for incoming messages
-    uint32_t frame_size = 0;      // Size of the incoming frame
+    // uint32_t frame_size = 0;      // Size of the incoming frame
 
     // Connection was recieved
     while (1)
@@ -131,6 +132,7 @@ int main(int argc, char *argv[])
                         new_output->total_collisions = 0;
                         new_output->send_in_slot = 0; // Initialize send_in_slot to 0
                         new_output->avg_bw = 0;
+                        new_output->frame_size = 0;
                         new_output->next = NULL;
                         new_output->start_time = GetTickCount();
                         new_output->end_time = 0;
@@ -143,17 +145,26 @@ int main(int argc, char *argv[])
                     int header_received = recv(socket, buffer, HEADER_SIZE, 0);
                     if (header_received > 0)
                     {
-                        frame_size = ((uint8_t)buffer[14] << 24) |
-                                     ((uint8_t)buffer[15] << 16) |
-                                     ((uint8_t)buffer[16] << 8) |
-                                     (uint8_t)buffer[17];
-                        char *data_buffer = malloc(frame_size + 1);
+                        Output *ptr = head->next;
+                        while (ptr)
+                        {
+                            if (ptr->socket == socket)
+                            {
+                                break;
+                            }
+                            ptr = ptr->next;
+                        }
+                        ptr->frame_size = ((uint8_t)buffer[14] << 24) |
+                                          ((uint8_t)buffer[15] << 16) |
+                                          ((uint8_t)buffer[16] << 8) |
+                                          (uint8_t)buffer[17];
+                        char *data_buffer = malloc(ptr->frame_size + 1);
                         if (!data_buffer)
                         {
                             fprintf(stderr, "Memory allocation failed\n");
                             continue;
                         }
-                        int bytes_received = recv(socket, data_buffer, frame_size, 0);
+                        int bytes_received = recv(socket, data_buffer, ptr->frame_size, 0);
                         if (bytes_received <= 0)
                         {
                             // Handle broken connection
@@ -161,12 +172,12 @@ int main(int argc, char *argv[])
                         }
 
                         data_buffer[bytes_received] = '\0';
-                        Output *ptr = head->next;
+                        ptr = head->next;
                         while (ptr)
                         {
                             if (ptr->socket == socket)
                             {
-                                ptr->num_packets++;    // One frame = one packet in your case
+                                ptr->num_packets++;
                                 ptr->send_in_slot = 1; // Set the flag to indicate that a packet was sent in the slot
                                 break;
                             }
@@ -199,20 +210,26 @@ int main(int argc, char *argv[])
                     }
                     else
                     {
-                        // Client disconnected
+                     // Client disconnected
+                        Output *prev = head;
                         Output *ptr = head->next;
                         while (ptr)
                         {
                             if (ptr->socket == socket)
                             {
+                                prev->next = ptr->next;
+                                // free(curr->sender_address);
+                                // free(curr);
                                 break;
                             }
+                            prev = ptr;
                             ptr = ptr->next;
                         }
                         if (ptr)
                         {
                             ptr->end_time = GetTickCount();
-                            ptr->avg_bw = (double)(frame_size * ptr->num_packets * 8) / ((ptr->end_time - ptr->start_time) * 1000); // in bps
+                            ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / ((ptr->end_time - ptr->start_time) * 1000); // in bps
+                            printf("\nIm here %d \n", socket); //DEBUG
                         }
 
                         fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",

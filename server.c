@@ -31,10 +31,8 @@ typedef struct Output
     double avg_bw;
 } Output;
 
-void exponential_backoff(int k, int slot_time, int *seed)
+void exponential_backoff(int k, int slot_time)
 {
-    srand(*seed);
-    *seed = rand();
     int r = rand() % (1 << k);
     Sleep(r * slot_time);
 }
@@ -85,7 +83,7 @@ int main(int argc, char *argv[])
     s1->slot_time = atoi(argv[5]);
     s1->seed = atoi(argv[6]);
     s1->timeout = atoi(argv[7]);
-
+    srand(s1->seed);
     // Create a thread to monitor for Ctrl+Z
     HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
     if (monitor_thread == NULL)
@@ -155,50 +153,45 @@ int main(int argc, char *argv[])
         // Append actual payload
         memcpy(packet + 18, frame, read_bytes);
         int transmissions = 0;
+        exponential_backoff(0, s1->slot_time);
         while (not_send && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-            Sleep(1000);
             send(sockfd, packet, read_bytes, 0);
             transmissions++;
             recieved_num = recv(sockfd, received, s1->frame_size, 0);
-            while (recieved_num <= 0)
-            {
-                curr_time = GetTickCount();
-                if (((curr_time - start_frame_time) > (s1->timeout) * 1000))
-                {
-                    collisions++;
-                    transmissions++;
-                    printf("(1) transmissions: %d\n", transmissions);
-                    total_transmissions++;
-                    exponential_backoff(collisions, s1->slot_time, &s1->seed);
-                    break;
-                }
-            }
-            if (recieved_num <= 0 || stop_flag)
-                break;
             curr_time = GetTickCount();
-            if (!(strcmp(received, packet) || ((curr_time - start_frame_time) > (s1->timeout) * 1000)))
+            if (((curr_time - start_frame_time) > (s1->timeout) * 1000))
             {
                 collisions++;
                 transmissions++;
-                printf("(2) transmissions: %d\n", transmissions);
-
+                printf("(0) transmissions: %d\n", transmissions); // DEBUG
                 total_transmissions++;
-                exponential_backoff(collisions, s1->slot_time, &s1->seed);
+                exponential_backoff(collisions, s1->slot_time);
+                continue;
             }
+            if(strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
+            {
+                printf("NOISE\n");//DEBUG
+                collisions++;
+                transmissions++;
+                printf("(1) transmissions: %d\n", transmissions); // DEBUG
+                total_transmissions++;
+                exponential_backoff(collisions, s1->slot_time);
+                continue;
+            }
+            if (stop_flag)
+                break;
+
             if (collisions >= 10)
             {
                 out->success = 0;
                 break;
             }
-            else
-            {
-                not_send = 0;
-            }
+            if(strcmp(received,packet)==0) not_send = 0;
         }
         free(packet);
-        if (!(out->success) || recieved_num <= 0 || stop_flag)
+        if (!(out->success) || stop_flag)
             break;
         not_send = 1;
         printf("(3) transmissions: %d\n", transmissions);
