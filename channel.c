@@ -17,7 +17,7 @@ typedef struct Input
 typedef struct Output
 {
     SOCKET socket;
-    uint32_t frame_size;
+    int frame_size;
     char *sender_address;
     int port_num;
     int num_packets;
@@ -58,25 +58,52 @@ int count_active(Output *head)
 
 int main(int argc, char *argv[])
 {
-    Output *head = (Output *)malloc(sizeof(Output));
-    head->next = NULL;
-    Output *current = head;
     if (argc != 3)
     {
-        fprintf(stderr, "Usage: %s <chan_ip> <chan_port>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <chan_port> <chan_port>\n", argv[0]);
         return 1;
     }
+    Output *head = (Output *)malloc(sizeof(Output));
+    if (!head)
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+    memset(head, 0, sizeof(Output));
+    head->next = NULL;
+    Output *current = head;
     Input *c1 = (Input *)malloc(sizeof(Input));
+    if (!c1)
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        free_list(head);
+        return 1;
+    }
+    memset(c1, 0, sizeof(Input));
     c1->chan_port = atoi(argv[1]);
     c1->slot_time = atoi(argv[2]);
     // Initialize Winsock
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != NO_ERROR)
-        printf("Error at WSAStartup()\n");
+    {
+        fprintf(stderr, "Error at WSAStartup(): %d\n", iResult);
+        free(c1);
+        free_list(head);
+        return 1;
+    }
 
     // Create a TCP socket
     SOCKET tcp_s = socket(AF_INET, SOCK_STREAM, 0); // listening to connections
+    if (tcp_s == INVALID_SOCKET)
+    {
+        fprintf(stderr, "Error creating socket: %d\n", WSAGetLastError());
+        WSACleanup();
+        free(c1);
+        free_list(head);
+        return 1;
+    }
+
     struct sockaddr_in my_addr;
     my_addr.sin_family = AF_INET;
     my_addr.sin_addr.s_addr = INADDR_ANY;
@@ -86,16 +113,31 @@ int main(int argc, char *argv[])
     int server_addr_len = sizeof(server_addr);
 
     // Bind the socket to the port
-    bind(tcp_s, (SOCKADDR *)&my_addr, sizeof(my_addr));
-    listen(tcp_s, MAX_SERVERS);
+    if (bind(tcp_s, (SOCKADDR *)&my_addr, sizeof(my_addr)) == SOCKET_ERROR)
+    {
+        fprintf(stderr, "Bind failed: %d\n", WSAGetLastError());
+        closesocket(tcp_s);
+        WSACleanup();
+        free(c1);
+        free_list(head);
+        return 1;
+    }
+
+    if (listen(tcp_s, MAX_SERVERS) == SOCKET_ERROR)
+    {
+        fprintf(stderr, "Listen failed: %d\n", WSAGetLastError());
+        closesocket(tcp_s);
+        WSACleanup();
+        free(c1);
+        free_list(head);
+        return 1;
+    }
 
     fd_set master_set, read_fds;
     FD_ZERO(&master_set);
     FD_SET(tcp_s, &master_set); // Add the listening socket to the master set
 
     char buffer[HEADER_SIZE + 1]; // Buffer for incoming messages
-    // uint32_t frame_size = 0;      // Size of the incoming frame
-
     // Connection was recieved
     while (1)
     {
@@ -111,22 +153,32 @@ int main(int argc, char *argv[])
             printf("Select failed: %d\n", WSAGetLastError());
             break;
         }
+
         for (u_int i = 0; i < master_set.fd_count; i++)
         {
             SOCKET socket = read_fds.fd_array[i];
             if (FD_ISSET(socket, &read_fds)) // check if socket is ready
             {
                 if (socket == tcp_s) // New connection on the listening socket
-
                 {
                     SOCKET new_server = accept(tcp_s, (SOCKADDR *)&server_addr, &server_addr_len);
-
                     if (new_server != INVALID_SOCKET)
                     {
                         FD_SET(new_server, &master_set); // Add the new socket to the master set
                         Output *new_output = (Output *)malloc(sizeof(Output));
+                        if (!new_output)
+                        {
+                            fprintf(stderr, "Memory allocation failed\n");
+                            continue; // Skip this connection but keep the server running
+                        }
                         new_output->socket = new_server;
                         new_output->sender_address = _strdup(inet_ntoa(server_addr.sin_addr));
+                        if (!new_output->sender_address)
+                        {
+                            fprintf(stderr, "Memory allocation failed\n");
+                            free(new_output);
+                            continue;
+                        }
                         new_output->port_num = ntohs(server_addr.sin_port);
                         new_output->num_packets = 0;
                         new_output->total_collisions = 0;
@@ -142,6 +194,7 @@ int main(int argc, char *argv[])
                 }
                 else // listen to messages
                 {
+                    memset(buffer, 0, HEADER_SIZE + 1);
                     int header_received = recv(socket, buffer, HEADER_SIZE, 0);
                     if (header_received > 0)
                     {
@@ -150,15 +203,20 @@ int main(int argc, char *argv[])
                         {
                             if (ptr->socket == socket)
                             {
+                                ptr->frame_size = ((uint8_t)buffer[14] << 24) |
+                                                  ((uint8_t)buffer[15] << 16) |
+                                                  ((uint8_t)buffer[16] << 8) |
+                                                  ((uint8_t)buffer[17]);
+                                ptr->num_packets++;
+                                ptr->send_in_slot = 1;
                                 break;
                             }
                             ptr = ptr->next;
                         }
-                        ptr->frame_size = ((uint8_t)buffer[14] << 24) |
-                                          ((uint8_t)buffer[15] << 16) |
-                                          ((uint8_t)buffer[16] << 8) |
-                                          (uint8_t)buffer[17];
+                        if (ptr->frame_size <= 0)
+                            continue;
                         char *data_buffer = malloc(ptr->frame_size + 1);
+
                         if (!data_buffer)
                         {
                             fprintf(stderr, "Memory allocation failed\n");
@@ -167,78 +225,80 @@ int main(int argc, char *argv[])
                         int bytes_received = recv(socket, data_buffer, ptr->frame_size, 0);
                         if (bytes_received <= 0)
                         {
-                            // Handle broken connection
+                            free(data_buffer);
                             continue;
                         }
-
                         data_buffer[bytes_received] = '\0';
-                        ptr = head->next;
-                        while (ptr)
-                        {
-                            if (ptr->socket == socket)
-                            {
-                                ptr->num_packets++;
-                                ptr->send_in_slot = 1; // Set the flag to indicate that a packet was sent in the slot
-                                break;
-                            }
-                            ptr = ptr->next;
-                        }
                         int collisions = count_active(head->next); // Count active connections
+                        const char *noise = "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!";
+                        int noise_len = (int)strlen(noise);
+                        
                         if (collisions > 1)
                         {
-                            strcpy(data_buffer, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!\n");
-                            Output *ptr = head->next;
-                            while (ptr)
-                            {
-                                if (ptr->socket == socket)
-                                {
-                                    break;
-                                }
-                                ptr = ptr->next;
-                            }
+                            strncpy(data_buffer, noise, noise_len);
+                            data_buffer[noise_len] = '\0';         // Ensure null-termination
+                            bytes_received = noise_len + 1;        // Adjust sent length to match the noise
                             ptr->total_collisions++;
                         }
+                        
                         for (u_int j = 0; j < master_set.fd_count; j++)
                         {
                             SOCKET out_socket = master_set.fd_array[j];
                             if (out_socket != tcp_s)
                             {
-                                send(out_socket, data_buffer, bytes_received, 0);
+                                if (send(out_socket, data_buffer, bytes_received, 0) == SOCKET_ERROR)
+                                {
+                                    fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
+                                }
                             }
                         }
                         free(data_buffer); // Free the data buffer after processing
                     }
                     else
                     {
-                     // Client disconnected
+                        // Client disconnected
                         Output *prev = head;
                         Output *ptr = head->next;
                         while (ptr)
                         {
                             if (ptr->socket == socket)
                             {
-                                prev->next = ptr->next;
-                                // free(curr->sender_address);
-                                // free(curr);
                                 break;
                             }
+                            current = prev;
                             prev = ptr;
                             ptr = ptr->next;
                         }
                         if (ptr)
                         {
                             ptr->end_time = GetTickCount();
-                            ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / ((ptr->end_time - ptr->start_time) * 1000); // in bps
-                            printf("\nIm here %d \n", socket); //DEBUG
-                        }
+                            double elapsed_time = (ptr->end_time - ptr->start_time) / 1000.0; // in seconds
+                            
+                            // Avoid division by zero
+                            if (elapsed_time > 0) {
+                                ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / (elapsed_time * 1000000); // in Mbps
+                            } else {
+                                ptr->avg_bw = 0;
+                            }
+                            fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
+                                    ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
+                            // FIX: Now remove from list
+                            prev->next = ptr->next;
 
-                        fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
-                                ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
-                        ptr->num_packets = 0;
-                        ptr->total_collisions = 0;
-                        ptr->send_in_slot = 0; // Reset send_in_slot for the next connection
-                        closesocket(socket);
-                        FD_CLR(socket, &master_set);
+                            // FIX: Update current if it was the last node
+                            if (current == ptr)
+                            {
+                                current = prev;
+                            }
+
+                            free(ptr->sender_address);
+                            free(ptr);
+                            // ptr->num_packets = 0;
+                            // ptr->total_collisions = 0;
+                            // ptr->send_in_slot = 0; // Reset send_in_slot for the next connection
+                            closesocket(socket);
+                            FD_CLR(socket, &master_set); // DEBUG                                                                        // DEBUG
+                        }
                     }
                 }
             }

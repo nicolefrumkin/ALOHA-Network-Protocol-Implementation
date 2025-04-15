@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <conio.h>
 
+#define HEADER_SIZE 18
+
 volatile int stop_flag = 0; // Shared flag to signal stop
 
 typedef struct Input
@@ -34,6 +36,7 @@ typedef struct Output
 void exponential_backoff(int k, int slot_time)
 {
     int r = rand() % (1 << k);
+    printf("waiting: %d", r * slot_time); // DEBUG
     Sleep(r * slot_time);
 }
 DWORD WINAPI monitor_ctrl_z(LPVOID param)
@@ -64,18 +67,25 @@ DWORD WINAPI monitor_ctrl_z(LPVOID param)
 }
 int main(int argc, char *argv[])
 {
-    Input *s1 = (Input *)malloc(sizeof(Input));
-    Output *out = (Output *)malloc(sizeof(Output));
-    memset(out, 0, sizeof(Output));
-    memset(s1, 0, sizeof(Input));
-
     if (argc != 8)
     {
         fprintf(stderr, "Usage: %s <chan_ip> <chan_port> <file_name> <frame_size> <slot_time> <seed> <timeout>\n", argv[0]);
-        free(s1);
-        free(out);
         return 1;
     }
+    Input *s1 = (Input *)malloc(sizeof(Input));
+    Output *out = (Output *)malloc(sizeof(Output));
+    if (!s1 || !out)
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        if (s1)
+            free(s1);
+        if (out)
+            free(out);
+        return 1;
+    }
+    memset(out, 0, sizeof(Output));
+    memset(s1, 0, sizeof(Input));
+
     s1->chan_ip = argv[1];
     s1->chan_port = atoi(argv[2]);
     s1->file_name = argv[3];
@@ -83,7 +93,9 @@ int main(int argc, char *argv[])
     s1->slot_time = atoi(argv[5]);
     s1->seed = atoi(argv[6]);
     s1->timeout = atoi(argv[7]);
+
     srand(s1->seed);
+
     // Create a thread to monitor for Ctrl+Z
     HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
     if (monitor_thread == NULL)
@@ -93,48 +105,112 @@ int main(int argc, char *argv[])
         free(out);
         return 1;
     }
+
+    // Initialize Winsock
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != NO_ERROR)
-        printf("Error at WSAStartup()\n");
+    {
+        fprintf(stderr, "Error at WSAStartup(): %d\n", iResult);
+        CloseHandle(monitor_thread);
+        free(s1);
+        free(out);
+        return 1;
+    }
 
     SOCKET sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == INVALID_SOCKET)
+    {
+        fprintf(stderr, "Socket creation failed: %d\n", WSAGetLastError());
+        WSACleanup();
+        CloseHandle(monitor_thread);
+        free(s1);
+        free(out);
+        return 1;
+    }
+
     struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(s1->chan_port);
     server_addr.sin_addr.s_addr = inet_addr(s1->chan_ip);
-    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+
+    // Connect to server
+    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == SOCKET_ERROR)
     {
-        printf("connection failed");
+        fprintf(stderr, "Connection failed: %d\n", WSAGetLastError());
+        closesocket(sockfd);
+        WSACleanup();
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
     }
+
+    // Open file
     FILE *f = fopen(s1->file_name, "rb");
     if (!f)
     {
-        printf("Failed to open file");
+        fprintf(stderr, "Failed to open file: %s\n", s1->file_name);
+        closesocket(sockfd);
+        WSACleanup();
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
     }
+
+    // Allocate buffers
     char *frame = (char *)malloc(s1->frame_size);
     char *received = (char *)malloc(s1->frame_size);
-    int not_send = 1;
-    int collisions = 0;
+    if (!frame || !received)
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        fclose(f);
+        closesocket(sockfd);
+        WSACleanup();
+        CloseHandle(monitor_thread);
+        if (frame)
+            free(frame);
+        if (received)
+            free(received);
+        free(s1);
+        free(out);
+        return 1;
+    }
 
     int total_transmissions = 0;
     int num_frames = 0;
     out->success = 1;
     DWORD start_time = GetTickCount();
-    DWORD curr_time = 0;
     int recieved_num = 1;
-    int dummy;
+
+    // Set socket timeout for receiving
+    int timeout_ms = s1->timeout * 1000; // Convert seconds to milliseconds
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR)
+    {
+        fprintf(stderr, "Setting socket timeout failed: %d\n", WSAGetLastError());
+    }
 
     while (!feof(f) && !stop_flag)
     {
+        memset(frame, 0, s1->frame_size);
+        memset(received, 0, s1->frame_size);
+
+        // Read a frame from the file
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
-        char *packet = malloc(16 + read_bytes);
+        if (read_bytes <= 0)
+            break; // EOF or error
+
+        char *packet = malloc(HEADER_SIZE + read_bytes);
+        if (!packet)
+        {
+            fprintf(stderr, "Memory allocation failed\n");
+            continue; // Try the next frame
+        }
+
+        // Build Ethernet header
+        // Destination MAC (6 bytes)
         memcpy(packet, "\xAA\xBB\xCC\xDD\xEE\xFF", 6);
 
         // Append src MAC (6 bytes)
@@ -151,54 +227,103 @@ int main(int argc, char *argv[])
         packet[17] = s1->frame_size & 0xFF;
 
         // Append actual payload
-        memcpy(packet + 18, frame, read_bytes);
+        memcpy(packet + HEADER_SIZE, frame, read_bytes);
+
         int transmissions = 0;
+        int collisions = 0;
+        int not_sent = 1;
+
+        // Wait for initial slot
         exponential_backoff(0, s1->slot_time);
-        while (not_send && !stop_flag)
+
+        // Attempt to send the frame
+        while (not_sent && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-            send(sockfd, packet, read_bytes, 0);
-            transmissions++;
-            recieved_num = recv(sockfd, received, s1->frame_size, 0);
-            curr_time = GetTickCount();
-            if (((curr_time - start_frame_time) > (s1->timeout) * 1000))
-            {
-                collisions++;
-                transmissions++;
-                printf("(0) transmissions: %d\n", transmissions); // DEBUG
-                total_transmissions++;
-                exponential_backoff(collisions, s1->slot_time);
-                continue;
-            }
-            if(strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
-            {
-                printf("NOISE\n");//DEBUG
-                collisions++;
-                transmissions++;
-                printf("(1) transmissions: %d\n", transmissions); // DEBUG
-                total_transmissions++;
-                exponential_backoff(collisions, s1->slot_time);
-                continue;
-            }
-            if (stop_flag)
-                break;
 
-            if (collisions >= 10)
+            // Send the packet (header + payload)
+            int send_result = send(sockfd, packet, HEADER_SIZE + read_bytes, 0);
+            if (send_result == SOCKET_ERROR)
             {
+                fprintf(stderr, "Send failed: %d\n", WSAGetLastError());
+                not_sent = 0; // Break out of retry loop
                 out->success = 0;
                 break;
             }
-            if(strcmp(received,packet)==0) not_send = 0;
+            transmissions++;
+
+            // Receive response
+            int recv_result = recv(sockfd, received, s1->frame_size, 0);
+            DWORD curr_time = GetTickCount();
+
+            // Check for timeout
+            if (recv_result == SOCKET_ERROR)
+            {
+                int error = WSAGetLastError();
+                if (error == WSAETIMEDOUT ||
+                    ((curr_time - start_frame_time) > (s1->timeout * 1000)))
+                {
+                    printf("Timeout occurred\n");
+                    collisions++;
+                    printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
+                    exponential_backoff(collisions, s1->slot_time);
+                    continue;
+                }
+                else
+                {
+                    // Other socket error
+                    fprintf(stderr, "Receive failed: %d\n", error);
+                    not_sent = 0;
+                    out->success = 0;
+                    break;
+                }
+            }
+            if (strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
+            {
+                printf("NOISE detected - collision occurred\n");
+                collisions++;
+                printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
+
+                // Back off exponentially
+                exponential_backoff(collisions, s1->slot_time);
+                continue;
+            }
+            // Check for user interrupt
+            if (stop_flag)
+                break;
+
+            // Check for too many collisions
+            if (collisions >= 10)
+            {
+                printf("Maximum collisions reached for this frame\n");
+                out->success = 0;
+                break;
+            }
+            // Successful transmission if we received our frame back
+            if (recv_result == read_bytes &&
+                memcmp(received, frame, read_bytes) == 0)
+            {
+                printf("Frame successfully transmitted\n");
+                not_sent = 0;
+            }
+            else
+            {
+                printf("Received unexpected data, retrying...\n");
+                collisions++;
+                exponential_backoff(collisions, s1->slot_time);
+            }
         }
+        // Free packet memory
         free(packet);
-        if (!(out->success) || stop_flag)
+
+        // Break if transmission failed or user interrupted
+        if (!out->success || stop_flag)
             break;
-        not_send = 1;
+
         printf("(3) transmissions: %d\n", transmissions);
         if (transmissions > out->max_transmissions)
             out->max_transmissions = transmissions;
-        total_transmissions = total_transmissions + transmissions;
-        transmissions = 0;
+        total_transmissions += transmissions;
         num_frames++;
     }
     printf("finished");
@@ -206,23 +331,37 @@ int main(int argc, char *argv[])
     WaitForSingleObject(monitor_thread, INFINITE);
     CloseHandle(monitor_thread);
 
+    // Fill output structure
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
     out->file_size = num_frames * s1->frame_size;
     out->total_time = GetTickCount() - start_time;
-    printf("\ntotal transmissions: %d\n", total_transmissions);
-    out->avg_transmissions = (double)total_transmissions / num_frames;
-    out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
+
+    // Wait for the monitoring thread to finish
+    WaitForSingleObject(monitor_thread, INFINITE);
+    CloseHandle(monitor_thread);
+
+    printf("\ntotal transmissions: %d\n", total_transmissions); // DEBUG
+    if (num_frames > 0)
+    {
+        out->avg_transmissions = (double)total_transmissions / num_frames;
+        out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
+    }
     fprintf(stderr, "\nSent file %s\n", out->file_name);
     fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(\n");
     fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
     fprintf(stderr, "Transmissions/frame: average %.3f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
     fprintf(stderr, "Average bandwidth: %.3f Mbps\n\n", out->avg_bw);
+
+    // Clean up
     fclose(f);
+    closesocket(sockfd);
+    WSACleanup();
     free(frame);
     free(received);
     free(s1);
     free(out);
-    return 0;
+
+    return out->success ? 0 : 1;
 }
