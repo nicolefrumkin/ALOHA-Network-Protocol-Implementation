@@ -4,6 +4,10 @@
 #include <windows.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <conio.h>
+
+
+volatile int stop_flag = 0; //Shared flag to signal stop
 
 typedef struct Input
 {
@@ -35,11 +39,38 @@ void exponential_backoff(int k, int slot_time, int *seed)
     int r = rand() % (1 << k);
     Sleep(r * slot_time);
 }
+DWORD WINAPI monitor_ctrl_z(LPVOID param)
+{
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    INPUT_RECORD inputRecord;
+    DWORD events;
 
+    while (!stop_flag)
+    {
+        if (ReadConsoleInput(hStdin, &inputRecord, 1, &events))
+        {
+            if (inputRecord.EventType == KEY_EVENT &&
+                inputRecord.Event.KeyEvent.bKeyDown)
+            {
+                // Detect Ctrl+Z (ASCII 26)
+                if (inputRecord.Event.KeyEvent.uChar.AsciiChar == 26)
+                {
+                    stop_flag = 1;
+                    break;
+                }
+            }
+        }
+        Sleep(50); // avoid busy loop
+    }
+
+    return 0;
+}
 int main(int argc, char *argv[])
 {
     Input *s1 = (Input *)malloc(sizeof(Input));
     Output *out = (Output *)malloc(sizeof(Output));
+    memset(out ,0, sizeof(Output));
+    memset(s1 ,0, sizeof(Input));
 
     if (argc != 8)
     {
@@ -56,6 +87,15 @@ int main(int argc, char *argv[])
     s1->seed = atoi(argv[6]);
     s1->timeout = atoi(argv[7]);
 
+    // Create a thread to monitor for Ctrl+Z
+    HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
+    if (monitor_thread == NULL)
+    {
+        fprintf(stderr, "Failed to create monitoring thread.\n");
+        free(s1);
+        free(out);
+        return 1;
+    }
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != NO_ERROR)
@@ -94,7 +134,7 @@ int main(int argc, char *argv[])
     int recieved_num = 1;
     int dummy;
 
-    while (!feof(f))
+    while (!feof(f) && !stop_flag)
     {
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
         char *packet = malloc(16 + read_bytes);
@@ -114,7 +154,7 @@ int main(int argc, char *argv[])
         // Append actual payload
         memcpy(packet + 16, frame, read_bytes);
 
-        while (not_send)
+        while (not_send && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
             send(sockfd, packet, read_bytes, 0);
@@ -131,7 +171,7 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            if (recieved_num <= 0)
+            if (recieved_num <= 0 || stop_flag)
                 break;
             curr_time = GetTickCount();
             if (!(strcmp(received, packet) || ((curr_time - start_frame_time) > (s1->timeout) * 1000)))
@@ -153,7 +193,7 @@ int main(int argc, char *argv[])
             }
         }
         free(packet);
-        if (!(out->success) || recieved_num <= 0)
+        if (!(out->success) || recieved_num <= 0 || stop_flag)
             break;
         not_send = 1;
         if (transmissions > out->max_transmissions)
@@ -162,11 +202,9 @@ int main(int argc, char *argv[])
         num_frames++;
         total_transmissions++;
     }
-    printf("Sent file, press ctrl+z");
-    while (scanf("%d", &dummy) != EOF)
-    {
-        // Just wait, don't do anything
-    }
+   // Wait for the monitoring thread to finish
+   WaitForSingleObject(monitor_thread, INFINITE);
+   CloseHandle(monitor_thread);
 
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
