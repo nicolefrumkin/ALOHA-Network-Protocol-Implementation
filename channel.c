@@ -26,6 +26,8 @@ typedef struct Output
     DWORD start_time;
     DWORD end_time;
     int send_in_slot;
+    char *data_buffer;
+    int data_size;
     struct Output *next;
 } Output;
 
@@ -43,10 +45,18 @@ void free_list(Output *head)
 
 void reset_all_send_flags(Output *head)
 {
-    Output *current = head->next; // Skip the head node
+    Sleep(1000);
+
+    Output *current = head->next; // Skip head node
     while (current != NULL)
     {
-        current->send_in_slot = 0; // Reset the flag for the new slot
+        current->send_in_slot = 0; // Reset flag
+        if (current->data_buffer)
+        {
+            free(current->data_buffer);
+            current->data_buffer = NULL;
+        }
+        current->data_size = 0;
         current = current->next;
     }
 }
@@ -54,7 +64,7 @@ void reset_all_send_flags(Output *head)
 int count_active(Output *head)
 {
     int count = 0;
-    Output *current = head; // Include the head node in the count
+    Output *current = head->next; // Include the head node in the count
     while (current != NULL)
     {
         if (current->send_in_slot == 1) // Check if a packet was sent in the slot
@@ -122,6 +132,9 @@ int main(int argc, char *argv[])
     struct sockaddr_in server_addr;
     int server_addr_len = sizeof(server_addr);
 
+    char *data_buffer;
+    int bytes_received;
+
     // Bind the socket to the port
     if (bind(tcp_s, (SOCKADDR *)&my_addr, sizeof(my_addr)) == SOCKET_ERROR)
     {
@@ -154,19 +167,27 @@ int main(int argc, char *argv[])
         read_fds = master_set;
         // Set the timeout for select
         struct timeval timeout;
-        timeout.tv_sec = c1->slot_time;
-        timeout.tv_usec = 0;
+        timeout.tv_sec = c1->slot_time / 1000;           // Convert milliseconds to seconds
+        timeout.tv_usec = (c1->slot_time % 1000) * 1000; // Remaining milliseconds to microseconds
 
-        reset_all_send_flags(head);
+        int max_fd = 0;
+        for (u_int i = 0; i < master_set.fd_count; i++)
+        {
+            if ((int)master_set.fd_array[i] > max_fd)
+                max_fd = (int)master_set.fd_array[i];
+        }
+        int ready = select(0, &read_fds, NULL, NULL, &timeout); // still Windows uses 0
 
-        int ready = select(0, &read_fds, NULL, NULL, &timeout); // waits until a socket is ready
         if (ready == SOCKET_ERROR)
         {
             printf("Select failed: %d\n", WSAGetLastError());
             break;
         }
-
-        int collision_detected = 0;
+        else if (ready == 0)
+        {
+            // Timeout occurred
+            continue;
+        }
 
         for (u_int i = 0; i < master_set.fd_count; i++)
         {
@@ -185,7 +206,6 @@ int main(int argc, char *argv[])
                             fprintf(stderr, "Memory allocation failed\n");
                             continue; // Skip this connection but keep the server running
                         }
-                        new_output->socket = new_server;
                         new_output->sender_address = _strdup(inet_ntoa(server_addr.sin_addr));
                         if (!new_output->sender_address)
                         {
@@ -193,130 +213,189 @@ int main(int argc, char *argv[])
                             free(new_output);
                             continue;
                         }
-                        new_output->port_num = ntohs(server_addr.sin_port);
-                        new_output->num_packets = 0;
-                        new_output->total_collisions = 0;
-                        new_output->send_in_slot = 0; // Initialize send_in_slot to 0
+                        new_output->socket = new_server;
                         new_output->avg_bw = 0;
                         new_output->frame_size = 0;
+                        new_output->num_packets = 0;
+                        new_output->total_collisions = 0;
+                        new_output->send_in_slot = 0;
+                        new_output->data_size = 0;
+                        new_output->port_num = ntohs(server_addr.sin_port);
+                        new_output->data_buffer = NULL;
                         new_output->next = NULL;
                         new_output->start_time = GetTickCount();
-                        new_output->end_time = 0;
+                        new_output->end_time = new_output->start_time;
                         current->next = new_output;
                         current = new_output;
                     }
                 }
                 else // listen to messages
                 {
-                    memset(buffer, 0, HEADER_SIZE + 1);
-                    int header_received = recv(socket, buffer, HEADER_SIZE, 0);
-                    buffer[HEADER_SIZE] = '\0';
-
-                    if (header_received > 0)
+                    if (FD_ISSET(socket, &read_fds))
                     {
-                        Output *ptr = head->next;
-                        while (ptr)
+                        FD_CLR(socket, &read_fds);
+                        memset(buffer, 0, HEADER_SIZE + 1);
+                        int header_received = recv(socket, buffer, HEADER_SIZE, 0);
+                        buffer[HEADER_SIZE] = '\0';
+
+                        if (header_received > 0)
                         {
-                            if (ptr->socket == socket)
+                            // Find the corresponding server
+                            Output *ptr = head->next;
+                            while (ptr)
                             {
-                                ptr->frame_size = ((uint8_t)buffer[14] << 24) |
-                                                  ((uint8_t)buffer[15] << 16) |
-                                                  ((uint8_t)buffer[16] << 8) |
-                                                  ((uint8_t)buffer[17]);
-                                ptr->num_packets++;
-                                ptr->send_in_slot = 1;
-                                break;
-                            }
-                            ptr = ptr->next;
-                        }
-                        if (!ptr || ptr->frame_size <= 0)
-                            continue;
-                        char *data_buffer = malloc(ptr->frame_size + 1);
-
-                        if (!data_buffer)
-                        {
-                            fprintf(stderr, "Memory allocation failed\n");
-                            continue;
-                        }
-                        int bytes_received = recv(socket, data_buffer, ptr->frame_size, 0);
-                        if (bytes_received <= 0)
-                        {
-                            free(data_buffer);
-                            continue;
-                        }
-                        data_buffer[bytes_received] = '\0';
-                        int collisions = count_active(head->next); // Count active connections
-                        const char *noise = "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!";
-                        int noise_len = (int)strlen(noise);
-
-                        if (collisions > 1)
-                        {
-                            strncpy(data_buffer, noise, noise_len);
-                            data_buffer[noise_len] = '\0';  // Ensure null-termination
-                            bytes_received = noise_len + 1; // Adjust sent length to match the noise
-                            ptr->total_collisions++;
-                        }
-
-                        for (u_int j = 0; j < master_set.fd_count; j++)
-                        {
-                            SOCKET out_socket = master_set.fd_array[j];
-                            if (out_socket != tcp_s) // Don't send to the listening socket
-                            {
-                                if (send(out_socket, data_buffer, bytes_received, 0) == SOCKET_ERROR)
+                                if (ptr->socket == socket)
                                 {
-                                    fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
+                                    // Extract frame size from header
+                                    ptr->frame_size = ((uint8_t)buffer[14] << 24) |
+                                                      ((uint8_t)buffer[15] << 16) |
+                                                      ((uint8_t)buffer[16] << 8) |
+                                                      ((uint8_t)buffer[17]);
+                                    ptr->num_packets++;
+                                    ptr->send_in_slot = 1; // Mark this server as active in this slot
+
+                                    // Read the data if frame size is valid
+                                    if (ptr->frame_size > 0)
+                                    {
+                                        // Allocate buffer for this server's data
+                                        ptr->data_buffer = (char *)malloc(ptr->frame_size + 1);
+                                        if (!ptr->data_buffer)
+                                        {
+                                            fprintf(stderr, "Memory allocation failed\n");
+                                            break;
+                                        }
+
+                                        // Receive the data portion
+                                        ptr->data_size = recv(socket, ptr->data_buffer, ptr->frame_size, 0);
+                                        if (ptr->data_size <= 0)
+                                        {
+                                            free(ptr->data_buffer);
+                                            ptr->data_buffer = NULL;
+                                            ptr->data_size = 0;
+                                            break;
+                                        }
+                                        ptr->data_buffer[ptr->frame_size] = '\0'; // Null-terminate the data
+                                    }
+                                    break;
                                 }
+                                ptr = ptr->next;
                             }
                         }
-                        free(data_buffer); // Free the data buffer after processing
-                    }
-                    else
-                    {
-                        // Client disconnected
-                        Output *prev = head;
-                        Output *ptr = head->next;
-                        while (ptr)
+                        else
                         {
-                            if (ptr->socket == socket)
+                            // server disconnected
+                            Output *prev = head;
+                            Output *ptr = head->next;
+                            while (ptr)
                             {
-                                break;
+                                if (ptr->socket == socket)
+                                {
+                                    break;
+                                }
+                                prev = ptr;
+                                ptr = ptr->next;
                             }
-                            current = prev;
-                            prev = ptr;
-                            ptr = ptr->next;
-                        }
-                        if (ptr)
-                        {
-                            ptr->end_time = GetTickCount();
-                            double elapsed_time = (ptr->end_time - ptr->start_time) / 1000.0; // in seconds
+                            if (ptr)
+                            {
+                                ptr->end_time = GetTickCount();
+                                double elapsed_time = (ptr->end_time - ptr->start_time) / 1000.0; // in seconds
 
-                            // Avoid division by zero
-                            if (elapsed_time > 0)
-                            {
-                                ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / (elapsed_time * 1000000); // in Mbps
-                            }
-                            else
-                            {
-                                ptr->avg_bw = 0;
-                            }
-                            fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
-                                    ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
-                            prev->next = ptr->next;
+                                // Avoid division by zero
+                                if (elapsed_time > 0)
+                                {
+                                    ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / (elapsed_time * 1000000); // in Mbps
+                                }
+                                else
+                                {
+                                    ptr->avg_bw = 0;
+                                }
+                                fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
+                                        ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
+                                prev->next = ptr->next;
 
-                            if (current == ptr)
-                            {
-                                current = prev;
-                            }
+                                if (current == ptr)
+                                {
+                                    current = prev;
+                                }
 
-                            free(ptr->sender_address);
-                            free(ptr);
-                            closesocket(socket);
-                            FD_CLR(socket, &master_set);
+                                free(ptr->sender_address);
+                                if (ptr->data_buffer)
+                                {
+                                    free(ptr->data_buffer);
+                                }
+                                free(ptr);
+                                closesocket(socket);
+                                FD_CLR(socket, &master_set);
+                            }
                         }
                     }
                 }
             }
         }
+        // After processing all sockets, check for collisions
+        int active_count = count_active(head);
+        printf("active count: %d\n", active_count); // DEBUG
+
+        // Handle collisions or successful transmission
+        if (active_count > 1) // Collision detected
+        {
+            // Prepare noise signal
+            const char *noise = "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!";
+            int noise_len = (int)strlen(noise);
+
+            // Update collision counters for all active servers
+            Output *ptr = head->next;
+            while (ptr)
+            {
+                if (ptr->send_in_slot == 1)
+                {
+                    ptr->total_collisions++;
+                }
+                ptr = ptr->next;
+            }
+
+            // Send noise signal to all servers
+            for (u_int j = 0; j < master_set.fd_count; j++)
+            {
+                SOCKET out_socket = master_set.fd_array[j];
+                if (out_socket != tcp_s) // Don't send to the listening socket
+                {
+                    if (send(out_socket, noise, noise_len, 0) == SOCKET_ERROR)
+                    {
+                        fprintf(stderr, "Error sending noise: %d\n", WSAGetLastError());
+                    }
+                }
+            }
+            reset_all_send_flags(head);
+        }
+        else if (active_count == 1) // Exactly one sender, no collision
+        {
+            // Find the active server
+            Output *active_ptr = head->next;
+            while (active_ptr)
+            {
+                if (active_ptr->send_in_slot == 1)
+                {
+                    // Send data from this server to all servers
+                    for (u_int j = 0; j < master_set.fd_count; j++)
+                    {
+                        SOCKET out_socket = master_set.fd_array[j];
+                        if (out_socket != tcp_s) // Don't send to the listening socket
+                        {
+                            if (send(out_socket, active_ptr->data_buffer, active_ptr->data_size, 0) == SOCKET_ERROR)
+                            {
+                                fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
+                            }
+                        }
+                    }
+                    break;
+                }
+                active_ptr = active_ptr->next;
+            }
+            reset_all_send_flags(head);
+        }
+
+        // If no active servers (active_count == 0), do nothing
     }
     closesocket(tcp_s);
     WSACleanup();

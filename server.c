@@ -183,11 +183,17 @@ int main(int argc, char *argv[])
     out->success = 1;
     DWORD start_time = GetTickCount();
 
-    // Set socket timeout for receiving
-    int timeout_ms = s1->timeout * 1000; // Convert seconds to milliseconds
+    // Set receive timeout (in milliseconds)
+    int timeout_ms = s1->timeout * 1000; // 5 seconds
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR)
     {
-        fprintf(stderr, "Setting socket timeout failed: %d\n", WSAGetLastError());
+        fprintf(stderr, "setsockopt SO_RCVTIMEO failed: %d\n", WSAGetLastError());
+    }
+
+    // Set send timeout
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR)
+    {
+        fprintf(stderr, "setsockopt SO_SNDTIMEO failed: %d\n", WSAGetLastError());
     }
 
     while (!feof(f) && !stop_flag)
@@ -233,12 +239,10 @@ int main(int argc, char *argv[])
 
         // Wait for initial slot
         exponential_backoff(0, s1->slot_time);
-
         // Attempt to send the frame
         while (not_sent && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-            Sleep(100);
             // Send the packet (header + payload)
             int send_result = send(sockfd, packet, HEADER_SIZE + read_bytes, 0);
             if (send_result == SOCKET_ERROR)
@@ -258,7 +262,7 @@ int main(int argc, char *argv[])
             if (recv_result == SOCKET_ERROR)
             {
                 int error = WSAGetLastError();
-                if (((curr_time - start_frame_time) > (s1->timeout * 1000)))
+                if (error == WSAETIMEDOUT)
                 {
                     printf("Timeout occurred\n");
                     collisions++;
@@ -268,8 +272,8 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    // Other socket error
-                    fprintf(stderr, "Receive failed: %d\n", error);
+                    int error = WSAGetLastError();
+                    fprintf(stderr, "Receive failed with error code: %d\n", error);
                     not_sent = 0;
                     out->success = 0;
                     break;
@@ -337,7 +341,6 @@ int main(int argc, char *argv[])
     WaitForSingleObject(monitor_thread, INFINITE);
     CloseHandle(monitor_thread);
 
-    printf("\ntotal transmissions: %d\n", total_transmissions); // DEBUG
     if (num_frames > 0)
     {
         out->avg_transmissions = (double)total_transmissions / num_frames;
@@ -357,7 +360,7 @@ int main(int argc, char *argv[])
     free(frame);
     free(received);
     free(s1);
-    //free(out);
+    // free(out);
 
     return out->success ? 0 : 1;
 }
