@@ -4,7 +4,7 @@
 #include <winsock2.h>
 #include <stdint.h>
 
-#define MAX_SERVERS 10
+#define MAX_SERVERS 50
 #define MSG_SIZE 1024
 #define HEADER_SIZE 18
 
@@ -41,10 +41,20 @@ void free_list(Output *head)
     }
 }
 
+void reset_all_send_flags(Output *head)
+{
+    Output *current = head->next; // Skip the head node
+    while (current != NULL)
+    {
+        current->send_in_slot = 0; // Reset the flag for the new slot
+        current = current->next;
+    }
+}
+
 int count_active(Output *head)
 {
     int count = 0;
-    Output *current = head->next; // Skip the head node
+    Output *current = head; // Include the head node in the count
     while (current != NULL)
     {
         if (current->send_in_slot == 1) // Check if a packet was sent in the slot
@@ -147,12 +157,16 @@ int main(int argc, char *argv[])
         timeout.tv_sec = c1->slot_time;
         timeout.tv_usec = 0;
 
+        reset_all_send_flags(head);
+
         int ready = select(0, &read_fds, NULL, NULL, &timeout); // waits until a socket is ready
         if (ready == SOCKET_ERROR)
         {
             printf("Select failed: %d\n", WSAGetLastError());
             break;
         }
+
+        int collision_detected = 0;
 
         for (u_int i = 0; i < master_set.fd_count; i++)
         {
@@ -215,7 +229,7 @@ int main(int argc, char *argv[])
                             }
                             ptr = ptr->next;
                         }
-                        if (ptr->frame_size <= 0)
+                        if (!ptr || ptr->frame_size <= 0)
                             continue;
                         char *data_buffer = malloc(ptr->frame_size + 1);
 
@@ -246,7 +260,7 @@ int main(int argc, char *argv[])
                         for (u_int j = 0; j < master_set.fd_count; j++)
                         {
                             SOCKET out_socket = master_set.fd_array[j];
-                            if (out_socket != tcp_s)
+                            if (out_socket != tcp_s) // Don't send to the listening socket
                             {
                                 if (send(out_socket, data_buffer, bytes_received, 0) == SOCKET_ERROR)
                                 {
@@ -287,10 +301,8 @@ int main(int argc, char *argv[])
                             }
                             fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
                                     ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
-                            // FIX: Now remove from list
                             prev->next = ptr->next;
 
-                            // FIX: Update current if it was the last node
                             if (current == ptr)
                             {
                                 current = prev;
@@ -298,11 +310,8 @@ int main(int argc, char *argv[])
 
                             free(ptr->sender_address);
                             free(ptr);
-                            // ptr->num_packets = 0;
-                            // ptr->total_collisions = 0;
-                            // ptr->send_in_slot = 0; // Reset send_in_slot for the next connection
                             closesocket(socket);
-                            FD_CLR(socket, &master_set); // DEBUG                                                                        // DEBUG
+                            FD_CLR(socket, &master_set);
                         }
                     }
                 }

@@ -182,7 +182,6 @@ int main(int argc, char *argv[])
     int num_frames = 0;
     out->success = 1;
     DWORD start_time = GetTickCount();
-    int recieved_num = 1;
 
     // Set socket timeout for receiving
     int timeout_ms = s1->timeout * 1000; // Convert seconds to milliseconds
@@ -345,7 +344,7 @@ int main(int argc, char *argv[])
         out->avg_bw = (double)(num_frames * s1->frame_size * 8) / (out->total_time * 1000);
     }
     fprintf(stderr, "\nSent file %s\n", out->file_name);
-    fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(\n");
+    fprintf(stderr, "Result: %s \n", out->success ? "Success :)" : "Failure :(");
     fprintf(stderr, "File size: %d Bytes (%d frames)\n", out->file_size, out->num_of_packets);
     fprintf(stderr, "Total transfer time: %d milliseconds\n", out->total_time);
     fprintf(stderr, "Transmissions/frame: average %.3f, maximum %d\n", out->avg_transmissions, out->max_transmissions);
@@ -358,7 +357,7 @@ int main(int argc, char *argv[])
     free(frame);
     free(received);
     free(s1);
-    free(out);
+    //free(out);
 
     return out->success ? 0 : 1;
 }
