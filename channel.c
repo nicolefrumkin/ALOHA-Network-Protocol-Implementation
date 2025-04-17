@@ -1,4 +1,4 @@
-#include "header.h"
+#include "network_sim.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,6 +15,7 @@ int main(int argc, char *argv[])
     }
     memset(head, 0, sizeof(OutputChannel));
     head->next = NULL;
+    OutputChannel *current = head;
     Input *c1 = (Input *)malloc(sizeof(Input));
     if (!c1)
     {
@@ -141,12 +142,15 @@ int main(int argc, char *argv[])
                         new_OutputChannel->frame_size = 0;
                         new_OutputChannel->num_packets = 0;
                         new_OutputChannel->total_collisions = 0;
+                        new_OutputChannel->send_in_slot = 0;
                         new_OutputChannel->data_size = 0;
                         new_OutputChannel->port_num = ntohs(server_addr.sin_port);
                         new_OutputChannel->data_buffer = NULL;
                         new_OutputChannel->next = NULL;
                         new_OutputChannel->start_time = GetTickCount();
                         new_OutputChannel->end_time = new_OutputChannel->start_time;
+                        current->next = new_OutputChannel;
+                        current = new_OutputChannel;
                     }
                 }
                 else // listen to messages
@@ -174,6 +178,7 @@ int main(int argc, char *argv[])
                                                       ((uint8_t)buffer[17]);
                                     printf("\nframe size: %d\n", ptr->frame_size); // DEBUG
                                     ptr->num_packets++;
+                                    ptr->send_in_slot = 1; // Mark this server as active in this slot
 
                                     // Read the data if frame size is valid
                                     if (ptr->frame_size > 0)
@@ -236,6 +241,11 @@ int main(int argc, char *argv[])
                                         ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
                                 prev->next = ptr->next;
 
+                                if (current == ptr)
+                                {
+                                    current = prev;
+                                }
+
                                 free(ptr->sender_address);
                                 if (ptr->data_buffer)
                                 {
@@ -251,6 +261,7 @@ int main(int argc, char *argv[])
             }
         }
         // After processing all sockets, check for collisions
+        int active_count = count_active(head);
         printf("active count: %d\n", master_set.fd_count); // DEBUG
 
         // Handle collisions or successful transmission
@@ -265,23 +276,25 @@ int main(int argc, char *argv[])
             OutputChannel *ptr = head->next;
             while (ptr)
             {
-
-                ptr->total_collisions++;
-                padded_noise = (char *)malloc(ptr->frame_size);
-                memset(padded_noise, 0, ptr->frame_size);
-                memcpy(padded_noise, noise, noise_len);
-                printf("padded noise: %s\n", padded_noise);
-                SOCKET out_socket = ptr->socket;
-                if (out_socket != tcp_s)
+                if (ptr->send_in_slot == 1)
                 {
-                    if (send(out_socket, padded_noise, ptr->frame_size, 0) == SOCKET_ERROR)
+                    ptr->total_collisions++;
+                    padded_noise = (char *)malloc(ptr->frame_size);
+                    memset(padded_noise, 0, ptr->frame_size);
+                    memcpy(padded_noise, noise, noise_len);
+                    printf("padded noise: %s\n", padded_noise);
+                    SOCKET out_socket = ptr->socket;
+                    if (out_socket != tcp_s)
                     {
-                        fprintf(stderr, "Error sending noise: %d\n", WSAGetLastError());
+                        if (send(out_socket, padded_noise, ptr->frame_size, 0) == SOCKET_ERROR)
+                        {
+                            fprintf(stderr, "Error sending noise: %d\n", WSAGetLastError());
+                        }
                     }
                 }
-
                 ptr = ptr->next;
             }
+            reset_all_send_flags(head);
         }
         else if (master_set.fd_count == 2) // Exactly one sender, no collision
         {
@@ -289,17 +302,26 @@ int main(int argc, char *argv[])
             OutputChannel *active_ptr = head->next;
             while (active_ptr)
             {
-                SOCKET out_socket = active_ptr->socket;
-                if (out_socket != tcp_s) // Don't send to the listening socket
+                if (active_ptr->send_in_slot == 1)
                 {
-                    printf("\n sent msg : %s len of msg: %d\n", active_ptr->data_buffer, active_ptr->data_size); // DEBUG
-                    if (send(out_socket, active_ptr->data_buffer, active_ptr->data_size, 0) == SOCKET_ERROR)
+                    // Send data from this server to all servers
+                    for (u_int j = 0; j < master_set.fd_count; j++)
                     {
-                        fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
+                        SOCKET out_socket = master_set.fd_array[j];
+                        if (out_socket != tcp_s) // Don't send to the listening socket
+                        {
+                            printf("\n sent msg : %s len of msg: %d\n", active_ptr->data_buffer, active_ptr->data_size); // DEBUG
+                            if (send(out_socket, active_ptr->data_buffer, active_ptr->data_size, 0) == SOCKET_ERROR)
+                            {
+                                fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
+                            }
+                        }
                     }
+                    break;
                 }
                 active_ptr = active_ptr->next;
             }
+            reset_all_send_flags(head);
         }
 
         // If no active servers (active_count == 0), do nothing
@@ -321,4 +343,35 @@ void free_list(OutputChannel *head)
         free(temp->sender_address);
         free(temp);
     }
+}
+
+void reset_all_send_flags(OutputChannel *head)
+{
+    OutputChannel *current = head->next; // Skip head node
+    while (current != NULL)
+    {
+        current->send_in_slot = 0; // Reset flag
+        if (current->data_buffer)
+        {
+            free(current->data_buffer);
+            current->data_buffer = NULL;
+        }
+        current->data_size = 0;
+        current = current->next;
+    }
+}
+
+int count_active(OutputChannel *head)
+{
+    int count = 0;
+    OutputChannel *current = head->next; // Include the head node in the count
+    while (current != NULL)
+    {
+        if (current->send_in_slot == 1) // Check if a packet was sent in the slot
+        {
+            count++;
+        }
+        current = current->next;
+    }
+    return count;
 }

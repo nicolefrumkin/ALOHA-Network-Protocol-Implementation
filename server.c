@@ -1,4 +1,4 @@
-#include "header.h"
+#include "network_sim.h"
 
 volatile int stop_flag = 0; // Shared flag to signal stop
 
@@ -229,16 +229,16 @@ int main(int argc, char *argv[])
                 continue;
             if (strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
             {
-            
-                printf("NOISE detected - collision occurred\n"); //DEBUG
-                collisions++;
-                printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);//DEBUG
                 if (collisions >= 10)
                 {
                     printf("Maximum collisions reached for this frame\n");
                     out->success = 0;
                     break;
                 }
+                printf("NOISE detected - collision occurred\n"); //DEBUG
+                collisions++;
+                printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
+
                 // Back off exponentially
                 exponential_backoff(collisions, s1->slot_time);
                 continue;
@@ -250,19 +250,19 @@ int main(int argc, char *argv[])
             // Check for too many collisions
             if (collisions >= 10)
             {
-                printf("Maximum collisions reached for this frame\n");//DEBUG
+                printf("Maximum collisions reached for this frame\n");
                 out->success = 0;
                 break;
             }
             // Successful transmission if we received our frame back
             if (memcmp(received, frame, recv_result) == 0)
             {
-                printf("Frame successfully transmitted\n");//DEBUG
+                printf("Frame successfully transmitted\n");
                 not_sent = 0;
             }
             else
             {
-                printf("Received unexpected data: %s, retrying...\n", received);//DEBUG
+                printf("Received unexpected data: %s, retrying...\n", received);
                 collisions++;
                 exponential_backoff(collisions, s1->slot_time);
             }
