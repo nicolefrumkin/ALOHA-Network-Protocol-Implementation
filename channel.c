@@ -88,6 +88,7 @@ int main(int argc, char *argv[])
     // Connection was recieved
     while (1)
     {
+        Sleep(100);
         read_fds = master_set;
         // Set the timeout for select
         struct timeval timeout;
@@ -262,7 +263,7 @@ int main(int argc, char *argv[])
         }
         // After processing all sockets, check for collisions
         // int active_count = count_active(head);
-        // printf("active count: %d\n", master_set.fd_count); // DEBUG
+        printf("active count: %d\n", master_set.fd_count); // DEBUG
 
         // Handle collisions or successful transmission
         if (master_set.fd_count > 2) // Collision detected
@@ -294,7 +295,7 @@ int main(int argc, char *argv[])
                 }
                 ptr = ptr->next;
             }
-            // reset_all_send_flags(head);
+            reset_all_send_flags(head);
         }
         else if (master_set.fd_count == 2) // Exactly one sender, no collision
         {
@@ -321,7 +322,7 @@ int main(int argc, char *argv[])
                 }
                 active_ptr = active_ptr->next;
             }
-            // reset_all_send_flags(head);
+            reset_all_send_flags(head);
         }
 
         // If no active servers (active_count == 0), do nothing

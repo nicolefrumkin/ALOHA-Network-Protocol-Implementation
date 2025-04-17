@@ -62,6 +62,7 @@ typedef struct OutputServer
 
 // Channel-side functions
 void free_list(OutputChannel *head);
+void reset_all_send_flags(OutputChannel *head);
 
 // Server-side functions
 void exponential_backoff(int k, int slot_time);
