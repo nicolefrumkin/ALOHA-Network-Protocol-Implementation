@@ -1,4 +1,4 @@
-#include "network_sim.h"
+#include "header.h"
 
 volatile int stop_flag = 0; // Shared flag to signal stop
 
@@ -98,8 +98,8 @@ int main(int argc, char *argv[])
     }
 
     // Allocate buffers
-    char *frame = (char *)malloc(s1->frame_size);
-    char *received = (char *)malloc(s1->frame_size);
+    char *frame = (char *)malloc(s1->frame_size+1);
+    char *received = (char *)malloc(s1->frame_size+1);
     if (!frame || !received)
     {
         fprintf(stderr, "Memory allocation failed\n");
@@ -138,15 +138,17 @@ int main(int argc, char *argv[])
     {
         SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
-        memset(frame, 0, s1->frame_size);
-        memset(received, 0, s1->frame_size);
+        memset(frame, 0, s1->frame_size+1);
+        memset(received, 0, s1->frame_size+1);
 
         // Read a frame from the file
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
         if (read_bytes <= 0)
             break; // EOF or error
 
-        char *packet = malloc(HEADER_SIZE + read_bytes);
+        char *packet = malloc(HEADER_SIZE + s1->frame_size + 1);
+        memset(packet, 0, HEADER_SIZE + s1->frame_size + 1); // Initialize packet buffer
+
         if (!packet)
         {
             fprintf(stderr, "Memory allocation failed\n");
@@ -162,7 +164,7 @@ int main(int argc, char *argv[])
 
         // Append ethertype (2 bytes, let's say 0x0800)
         packet[12] = 0x08;
-        packet[13] = 0x00;
+        packet[13] = 0x01;
 
         // Append frame size (4 bytes, big-endian)
         packet[14] = (s1->frame_size >> 24) & 0xFF;
@@ -172,8 +174,9 @@ int main(int argc, char *argv[])
 
         // Append actual payload
         memcpy(packet + HEADER_SIZE, frame, s1->frame_size);
-        printf("frame: %s\n\n", frame);
-
+        frame[s1->frame_size] = '\0';
+        packet[HEADER_SIZE + read_bytes] = '\0'; // Null-terminate the packet
+    
         int transmissions = 0;
         int collisions = 0;
         int not_sent = 1;
@@ -184,10 +187,10 @@ int main(int argc, char *argv[])
         while (not_sent && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-            Sleep(100);
             // Send the packet (header + payload)
             int send_result = send(sockfd, packet, HEADER_SIZE + s1->frame_size, 0);
-            // printf("sent packet: %s!!!!\n", packet);
+            printf("\nframe: %s lenOfFrame %d\n\n", frame, strlen(frame)); //DEBUG
+            printf("\npacket: %s lenOfPacket %d\n\n", packet, strlen(packet)); //DEBUG
             if (send_result == SOCKET_ERROR)
             {
                 fprintf(stderr, "Send failed: %d\n", WSAGetLastError());
@@ -198,7 +201,7 @@ int main(int argc, char *argv[])
             transmissions++;
             // Receive response
             int recv_result = recv(sockfd, received, s1->frame_size, 0);
-            // printf("\nmsg: %s\n", received); // DEBUG
+            printf("\n recv_msg: %s len of msg: %d\n", received, strlen(received)); // DEBUG
             DWORD curr_time = GetTickCount();
 
             // Check for timeout
@@ -207,16 +210,16 @@ int main(int argc, char *argv[])
                 int error = WSAGetLastError();
                 if (error == WSAETIMEDOUT)
                 {
-                    printf("Timeout occurred\n");
+                    printf("Timeout occurred\n"); //DEBUG
                     collisions++;
-                    printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
+                    printf("Collision count: %d, transmissions: %d\n", collisions, transmissions); //DEBUG
                     exponential_backoff(collisions, s1->slot_time);
                     continue;
                 }
                 else
                 {
                     int error = WSAGetLastError();
-                    fprintf(stderr, "Receive failed with error code: %d\n", error);
+                    fprintf(stderr, "Receive failed with error code: %d\n", error); 
                     not_sent = 0;
                     out->success = 0;
                     break;
@@ -226,10 +229,16 @@ int main(int argc, char *argv[])
                 continue;
             if (strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
             {
-                printf("NOISE detected - collision occurred\n");
+            
+                printf("NOISE detected - collision occurred\n"); //DEBUG
                 collisions++;
-                printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
-
+                printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);//DEBUG
+                if (collisions >= 10)
+                {
+                    printf("Maximum collisions reached for this frame\n");
+                    out->success = 0;
+                    break;
+                }
                 // Back off exponentially
                 exponential_backoff(collisions, s1->slot_time);
                 continue;
@@ -241,19 +250,19 @@ int main(int argc, char *argv[])
             // Check for too many collisions
             if (collisions >= 10)
             {
-                printf("Maximum collisions reached for this frame\n");
+                printf("Maximum collisions reached for this frame\n");//DEBUG
                 out->success = 0;
                 break;
             }
             // Successful transmission if we received our frame back
-            if (memcmp(received, frame, s1->frame_size) == 0)
+            if (memcmp(received, frame, recv_result) == 0)
             {
-                printf("Frame successfully transmitted\n");
+                printf("Frame successfully transmitted\n");//DEBUG
                 not_sent = 0;
             }
             else
             {
-                printf("Received unexpected data: %s, retrying...\n", received);
+                printf("Received unexpected data: %s, retrying...\n", received);//DEBUG
                 collisions++;
                 exponential_backoff(collisions, s1->slot_time);
             }
@@ -309,7 +318,7 @@ int main(int argc, char *argv[])
 void exponential_backoff(int k, int slot_time)
 {
     int r = rand() % (1 << k);
-    Sleep(r * slot_time);
+    Sleep((r * slot_time)%10000);
 }
 
 DWORD WINAPI monitor_ctrl_z(LPVOID param)

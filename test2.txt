@@ -1,0 +1,60 @@
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
+Hello from server 2.
+This file belongs to the second test client.
+It is used to check parallel transmission.
+The channel should simulate collisions if both servers send together.
+Another line here to keep it non-trivial.
+End of input 2.
