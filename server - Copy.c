@@ -34,14 +34,14 @@ int main(int argc, char *argv[])
     srand(s1->seed);
 
     // Create a thread to monitor for Ctrl+Z
-    // HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
-    // if (monitor_thread == NULL)
-    // {
-    //     fprintf(stderr, "Failed to create monitoring thread.\n");
-    //     free(s1);
-    //     free(out);
-    //     return 1;
-    // }
+    HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
+    if (monitor_thread == NULL)
+    {
+        fprintf(stderr, "Failed to create monitoring thread.\n");
+        free(s1);
+        free(out);
+        return 1;
+    }
 
     // Initialize Winsock
     WSADATA wsaData;
@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     if (iResult != NO_ERROR)
     {
         fprintf(stderr, "Error at WSAStartup(): %d\n", iResult);
-        // CloseHandle(monitor_thread);
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Socket creation failed: %d\n", WSAGetLastError());
         WSACleanup();
-        // CloseHandle(monitor_thread);
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Connection failed: %d\n", WSAGetLastError());
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to open file: %s\n", s1->file_name);
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
+        CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
         fclose(f);
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
+        CloseHandle(monitor_thread);
         if (frame)
             free(frame);
         if (received)
@@ -136,8 +136,6 @@ int main(int argc, char *argv[])
 
     while (!feof(f) && !stop_flag)
     {
-        SetConsoleCtrlHandler(ctrl_handler, TRUE);
-
         memset(frame, 0, s1->frame_size);
         memset(received, 0, s1->frame_size);
 
@@ -171,8 +169,7 @@ int main(int argc, char *argv[])
         packet[17] = s1->frame_size & 0xFF;
 
         // Append actual payload
-        memcpy(packet + HEADER_SIZE, frame, s1->frame_size);
-        printf("frame: %s\n\n", frame);
+        memcpy(packet + HEADER_SIZE, frame, read_bytes);
 
         int transmissions = 0;
         int collisions = 0;
@@ -184,10 +181,8 @@ int main(int argc, char *argv[])
         while (not_sent && !stop_flag)
         {
             DWORD start_frame_time = GetTickCount();
-            Sleep(100);
             // Send the packet (header + payload)
-            int send_result = send(sockfd, packet, HEADER_SIZE + s1->frame_size, 0);
-            // printf("sent packet: %s!!!!\n", packet);
+            int send_result = send(sockfd, packet, HEADER_SIZE + read_bytes, 0);
             if (send_result == SOCKET_ERROR)
             {
                 fprintf(stderr, "Send failed: %d\n", WSAGetLastError());
@@ -196,9 +191,11 @@ int main(int argc, char *argv[])
                 break;
             }
             transmissions++;
+
             // Receive response
             int recv_result = recv(sockfd, received, s1->frame_size, 0);
-            // printf("\nmsg: %s\n", received); // DEBUG
+            if (strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
+                printf("\nmsg: %s\n", received);
             DWORD curr_time = GetTickCount();
 
             // Check for timeout
@@ -222,8 +219,6 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            if (recv_result <= 0)
-                continue;
             if (strncmp(received, "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!", 39) == 0)
             {
                 printf("NOISE detected - collision occurred\n");
@@ -246,14 +241,15 @@ int main(int argc, char *argv[])
                 break;
             }
             // Successful transmission if we received our frame back
-            if (memcmp(received, frame, s1->frame_size) == 0)
+            if (recv_result == read_bytes &&
+                memcmp(received, frame, read_bytes) == 0)
             {
                 printf("Frame successfully transmitted\n");
                 not_sent = 0;
             }
             else
             {
-                printf("Received unexpected data: %s, retrying...\n", received);
+                printf("Received unexpected data, retrying...\n");
                 collisions++;
                 exponential_backoff(collisions, s1->slot_time);
             }
@@ -270,17 +266,20 @@ int main(int argc, char *argv[])
         total_transmissions += transmissions;
         num_frames++;
     }
-
-    printf("finished sending file\n");
+    printf("finished");
     // Wait for the monitoring thread to finish
-    // WaitForSingleObject(monitor_thread, INFINITE);
-    // CloseHandle(monitor_thread);
+    WaitForSingleObject(monitor_thread, INFINITE);
+    CloseHandle(monitor_thread);
 
     // Fill OutputServer structure
     out->num_of_packets = num_frames;
     out->file_name = s1->file_name;
     out->file_size = num_frames * s1->frame_size;
     out->total_time = GetTickCount() - start_time;
+
+    // Wait for the monitoring thread to finish
+    WaitForSingleObject(monitor_thread, INFINITE);
+    CloseHandle(monitor_thread);
 
     if (num_frames > 0)
     {
@@ -337,14 +336,4 @@ DWORD WINAPI monitor_ctrl_z(LPVOID param)
     }
 
     return 0;
-}
-
-BOOL WINAPI ctrl_handler(DWORD ctrl_type)
-{
-    if (ctrl_type == CTRL_C_EVENT)
-    {
-        stop_flag = 1;
-        return TRUE;
-    }
-    return FALSE;
 }

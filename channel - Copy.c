@@ -266,7 +266,6 @@ int main(int argc, char *argv[])
             // Prepare noise signal
             const char *noise = "!!!!!!!!!!!!!!!!!NOISE!!!!!!!!!!!!!!!!!";
             int noise_len = (int)strlen(noise);
-            char *padded_noise = NULL;
 
             // Update collision counters for all active servers
             OutputChannel *ptr = head->next;
@@ -275,20 +274,21 @@ int main(int argc, char *argv[])
                 if (ptr->send_in_slot == 1)
                 {
                     ptr->total_collisions++;
-                    padded_noise = (char *)malloc(ptr->frame_size);
-                    memset(padded_noise, 0, ptr->frame_size);
-                    memcpy(padded_noise, noise, noise_len);
-                    printf("padded noise: %s\n", padded_noise);
-                    SOCKET out_socket = ptr->socket;
-                    if (out_socket != tcp_s)
-                    {
-                        if (send(out_socket, padded_noise, ptr->frame_size, 0) == SOCKET_ERROR)
-                        {
-                            fprintf(stderr, "Error sending noise: %d\n", WSAGetLastError());
-                        }
-                    }
                 }
                 ptr = ptr->next;
+            }
+
+            // Send noise signal to all servers
+            for (u_int j = 0; j < master_set.fd_count; j++)
+            {
+                SOCKET out_socket = master_set.fd_array[j];
+                if (out_socket != tcp_s) // Don't send to the listening socket
+                {
+                    if (send(out_socket, noise, noise_len, 0) == SOCKET_ERROR)
+                    {
+                        fprintf(stderr, "Error sending noise: %d\n", WSAGetLastError());
+                    }
+                }
             }
             reset_all_send_flags(head);
         }
