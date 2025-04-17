@@ -1,4 +1,4 @@
-#include "network_sim.h"
+#include "header.h"
 
 volatile int stop_flag = 0; // Shared flag to signal stop
 
@@ -98,8 +98,8 @@ int main(int argc, char *argv[])
     }
 
     // Allocate buffers
-    char *frame = (char *)malloc(s1->frame_size+1);
-    char *received = (char *)malloc(s1->frame_size+1);
+    char *frame = (char *)malloc(s1->frame_size + 1);
+    char *received = (char *)malloc(s1->frame_size + 1);
     if (!frame || !received)
     {
         fprintf(stderr, "Memory allocation failed\n");
@@ -138,8 +138,8 @@ int main(int argc, char *argv[])
     {
         SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
-        memset(frame, 0, s1->frame_size+1);
-        memset(received, 0, s1->frame_size+1);
+        memset(frame, 0, s1->frame_size + 1);
+        memset(received, 0, s1->frame_size + 1);
 
         // Read a frame from the file
         size_t read_bytes = fread(frame, 1, s1->frame_size, f);
@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
         memcpy(packet + HEADER_SIZE, frame, s1->frame_size);
         frame[s1->frame_size] = '\0';
         packet[HEADER_SIZE + read_bytes] = '\0'; // Null-terminate the packet
-    
+
         int transmissions = 0;
         int collisions = 0;
         int not_sent = 1;
@@ -189,8 +189,8 @@ int main(int argc, char *argv[])
             DWORD start_frame_time = GetTickCount();
             // Send the packet (header + payload)
             int send_result = send(sockfd, packet, HEADER_SIZE + s1->frame_size, 0);
-            printf("\nframe: %s lenOfFrame %d\n\n", frame, strlen(frame)); //DEBUG
-            printf("\npacket: %s lenOfPacket %d\n\n", packet, strlen(packet)); //DEBUG
+            printf("\nframe: %s lenOfFrame %d\n\n", frame, strlen(frame));     // DEBUG
+            printf("\npacket: %s lenOfPacket %d\n\n", packet, strlen(packet)); // DEBUG
             if (send_result == SOCKET_ERROR)
             {
                 fprintf(stderr, "Send failed: %d\n", WSAGetLastError());
@@ -210,16 +210,16 @@ int main(int argc, char *argv[])
                 int error = WSAGetLastError();
                 if (error == WSAETIMEDOUT)
                 {
-                    printf("Timeout occurred\n"); //DEBUG
+                    printf("Timeout occurred\n"); // DEBUG
                     collisions++;
-                    printf("Collision count: %d, transmissions: %d\n", collisions, transmissions); //DEBUG
+                    printf("Collision count: %d, transmissions: %d\n", collisions, transmissions); // DEBUG
                     exponential_backoff(collisions, s1->slot_time);
                     continue;
                 }
                 else
                 {
                     int error = WSAGetLastError();
-                    fprintf(stderr, "Receive failed with error code: %d\n", error); 
+                    fprintf(stderr, "Receive failed with error code: %d\n", error);
                     not_sent = 0;
                     out->success = 0;
                     break;
@@ -235,7 +235,7 @@ int main(int argc, char *argv[])
                     out->success = 0;
                     break;
                 }
-                printf("NOISE detected - collision occurred\n"); //DEBUG
+                printf("NOISE detected - collision occurred\n"); // DEBUG
                 collisions++;
                 printf("Collision count: %d, transmissions: %d\n", collisions, transmissions);
 
@@ -318,7 +318,7 @@ int main(int argc, char *argv[])
 void exponential_backoff(int k, int slot_time)
 {
     int r = rand() % (1 << k);
-    Sleep((r * slot_time)%10000);
+    Sleep((r * slot_time) % 10000);
 }
 
 DWORD WINAPI monitor_ctrl_z(LPVOID param)
