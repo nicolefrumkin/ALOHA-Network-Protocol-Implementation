@@ -63,10 +63,10 @@ typedef struct OutputServer
 // Channel-side functions
 void free_list(OutputChannel *head);
 void reset_all_send_flags(OutputChannel *head);
+DWORD WINAPI monitor_ctrl_z(LPVOID param);
 
 // Server-side functions
 void exponential_backoff(int k, int slot_time);
-DWORD WINAPI monitor_ctrl_z(LPVOID param);
 BOOL WINAPI ctrl_handler(DWORD ctrl_type);
 
 #endif // NETWORK_SIM_H

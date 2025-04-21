@@ -1,5 +1,7 @@
 #include "header.h"
 
+// volatile int stop_flag = 0; // Shared flag to signal stop
+
 int main(int argc, char *argv[])
 {
     if (argc != 3)
@@ -88,6 +90,11 @@ int main(int argc, char *argv[])
     // Connection was recieved
     while (1)
     {
+        if (_kbhit()) { // Check if a key was pressed
+            int ch = _getch(); // Read key (non-blocking)
+            if (ch == 26) break; // ASCII 26 = Ctrl+Z 
+        }
+
         Sleep(100);
         read_fds = master_set;
         // Set the timeout for select
@@ -153,6 +160,7 @@ int main(int argc, char *argv[])
                         current->next = new_OutputChannel;
                         current = new_OutputChannel;
                     }
+                    printf("Server connected, socket: %d\n",new_server);
                 }
                 else // listen to messages
                 {
@@ -238,6 +246,7 @@ int main(int argc, char *argv[])
                                 {
                                     ptr->avg_bw = 0;
                                 }
+                                printf("Server disconnected, socket: %d\n",ptr->socket);
                                 fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
                                         ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
                                 prev->next = ptr->next;
@@ -376,3 +385,30 @@ int count_active(OutputChannel *head)
     }
     return count;
 }
+
+// DWORD WINAPI monitor_ctrl_z(LPVOID param)
+// {
+//     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+//     INPUT_RECORD inputRecord;
+//     DWORD events;
+
+//     while (!stop_flag)
+//     {
+//         if (ReadConsoleInput(hStdin, &inputRecord, 1, &events))
+//         {
+//             if (inputRecord.EventType == KEY_EVENT &&
+//                 inputRecord.Event.KeyEvent.bKeyDown)
+//             {
+//                 // Detect Ctrl+Z (ASCII 26)
+//                 if (inputRecord.Event.KeyEvent.uChar.AsciiChar == 26)
+//                 {
+//                     stop_flag = 1;
+//                     break;
+//                 }
+//             }
+//         }
+//         Sleep(50); // avoid busy loop
+//     }
+
+//     return 0;
+// }

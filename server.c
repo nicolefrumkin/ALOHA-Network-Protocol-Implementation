@@ -33,23 +33,12 @@ int main(int argc, char *argv[])
 
     srand(s1->seed);
 
-    // Create a thread to monitor for Ctrl+Z
-    // HANDLE monitor_thread = CreateThread(NULL, 0, monitor_ctrl_z, NULL, 0, NULL);
-    // if (monitor_thread == NULL)
-    // {
-    //     fprintf(stderr, "Failed to create monitoring thread.\n");
-    //     free(s1);
-    //     free(out);
-    //     return 1;
-    // }
-
     // Initialize Winsock
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != NO_ERROR)
     {
         fprintf(stderr, "Error at WSAStartup(): %d\n", iResult);
-        // CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -60,7 +49,6 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Socket creation failed: %d\n", WSAGetLastError());
         WSACleanup();
-        // CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -78,7 +66,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Connection failed: %d\n", WSAGetLastError());
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -91,7 +78,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to open file: %s\n", s1->file_name);
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
         free(s1);
         free(out);
         return 1;
@@ -106,7 +92,6 @@ int main(int argc, char *argv[])
         fclose(f);
         closesocket(sockfd);
         WSACleanup();
-        // CloseHandle(monitor_thread);
         if (frame)
             free(frame);
         if (received)
@@ -281,9 +266,6 @@ int main(int argc, char *argv[])
     }
 
     printf("finished sending file\n");
-    // Wait for the monitoring thread to finish
-    // WaitForSingleObject(monitor_thread, INFINITE);
-    // CloseHandle(monitor_thread);
 
     // Fill OutputServer structure
     out->num_of_packets = num_frames;
@@ -319,33 +301,6 @@ void exponential_backoff(int k, int slot_time)
 {
     int r = rand() % (1 << k);
     Sleep((r * slot_time) % 10000);
-}
-
-DWORD WINAPI monitor_ctrl_z(LPVOID param)
-{
-    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-    INPUT_RECORD inputRecord;
-    DWORD events;
-
-    while (!stop_flag)
-    {
-        if (ReadConsoleInput(hStdin, &inputRecord, 1, &events))
-        {
-            if (inputRecord.EventType == KEY_EVENT &&
-                inputRecord.Event.KeyEvent.bKeyDown)
-            {
-                // Detect Ctrl+Z (ASCII 26)
-                if (inputRecord.Event.KeyEvent.uChar.AsciiChar == 26)
-                {
-                    stop_flag = 1;
-                    break;
-                }
-            }
-        }
-        Sleep(50); // avoid busy loop
-    }
-
-    return 0;
 }
 
 BOOL WINAPI ctrl_handler(DWORD ctrl_type)
