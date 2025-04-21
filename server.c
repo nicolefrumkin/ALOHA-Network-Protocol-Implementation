@@ -174,8 +174,6 @@ int main(int argc, char *argv[])
             DWORD start_frame_time = GetTickCount();
             // Send the packet (header + payload)
             int send_result = send(sockfd, packet, HEADER_SIZE + s1->frame_size, 0);
-            printf("\nframe: %s lenOfFrame %d\n\n", frame, strlen(frame));     // DEBUG
-            printf("\npacket: %s lenOfPacket %d\n\n", packet, strlen(packet)); // DEBUG
             if (send_result == SOCKET_ERROR)
             {
                 fprintf(stderr, "Send failed: %d\n", WSAGetLastError());
@@ -186,7 +184,6 @@ int main(int argc, char *argv[])
             transmissions++;
             // Receive response
             int recv_result = recv(sockfd, received, s1->frame_size, 0);
-            printf("\n recv_msg: %s len of msg: %d\n", received, strlen(received)); // DEBUG
             DWORD curr_time = GetTickCount();
 
             // Check for timeout

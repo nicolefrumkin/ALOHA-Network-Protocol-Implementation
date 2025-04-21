@@ -47,6 +47,11 @@ typedef struct OutputChannel
     struct OutputChannel *next;
 } OutputChannel;
 
+typedef struct PrintsNode {
+    char print[256];
+    struct PrintsNode *next;
+} PrintsNode;
+
 // Output structure for server
 typedef struct OutputServer
 {
@@ -61,9 +66,12 @@ typedef struct OutputServer
 } OutputServer;
 
 // Channel-side functions
-void free_list(OutputChannel *head);
+void free_list_1(OutputChannel *head);
+void free_list_2(PrintsNode *head);
 void reset_all_send_flags(OutputChannel *head);
 DWORD WINAPI monitor_ctrl_z(LPVOID param);
+void print_logs(PrintsNode *head);
+void log_server_stats(OutputChannel *ptr, PrintsNode **currPrints);
 
 // Server-side functions
 void exponential_backoff(int k, int slot_time);

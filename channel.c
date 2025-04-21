@@ -1,6 +1,6 @@
 #include "header.h"
 
-// volatile int stop_flag = 0; // Shared flag to signal stop
+volatile int stop_flag = 0; // Shared flag to signal stop
 
 int main(int argc, char *argv[])
 {
@@ -9,6 +9,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Usage: %s <chan_port> <chan_port>\n", argv[0]);
         return 1;
     }
+    // initialize servers list
     OutputChannel *head = (OutputChannel *)malloc(sizeof(OutputChannel));
     if (!head)
     {
@@ -18,11 +19,26 @@ int main(int argc, char *argv[])
     memset(head, 0, sizeof(OutputChannel));
     head->next = NULL;
     OutputChannel *current = head;
+
+    // initialize prints list
+    PrintsNode *headPrints = (PrintsNode *)malloc(sizeof(PrintsNode));
+    if (!headPrints)
+    {
+        free(head);
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+    memset(headPrints, 0, sizeof(PrintsNode));
+    headPrints->next = NULL;
+    PrintsNode *currPrints = headPrints;
+
+    // initialize input struct
     Input *c1 = (Input *)malloc(sizeof(Input));
     if (!c1)
     {
         fprintf(stderr, "Memory allocation failed\n");
-        free_list(head);
+        free(head);
+        free(headPrints);
         return 1;
     }
     memset(c1, 0, sizeof(Input));
@@ -35,7 +51,8 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Error at WSAStartup(): %d\n", iResult);
         free(c1);
-        free_list(head);
+        free_list_1(head);
+        free_list_2(headPrints);
         return 1;
     }
 
@@ -46,7 +63,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error creating socket: %d\n", WSAGetLastError());
         WSACleanup();
         free(c1);
-        free_list(head);
+        free_list_1(head);
+        free_list_2(headPrints);
         return 1;
     }
 
@@ -68,7 +86,8 @@ int main(int argc, char *argv[])
         closesocket(tcp_s);
         WSACleanup();
         free(c1);
-        free_list(head);
+        free_list_1(head);
+        free_list_2(headPrints);
         return 1;
     }
 
@@ -78,7 +97,8 @@ int main(int argc, char *argv[])
         closesocket(tcp_s);
         WSACleanup();
         free(c1);
-        free_list(head);
+        free_list_1(head);
+        free_list_2(headPrints);
         return 1;
     }
 
@@ -92,8 +112,19 @@ int main(int argc, char *argv[])
     {
         if (_kbhit()) { // Check if a key was pressed
             int ch = _getch(); // Read key (non-blocking)
-            if (ch == 26) break; // ASCII 26 = Ctrl+Z 
+            if (ch == 26) stop_flag = 1; // ASCII 26 = Ctrl+Z 
         }
+
+        if (stop_flag) {
+            printf("\nCtrl+Z detected. Finalizing logs...\n");
+        
+            OutputChannel *ptr = head->next;
+            while (ptr) {
+                log_server_stats(ptr, &currPrints);
+                ptr = ptr->next;
+            }
+            break;
+        }        
 
         Sleep(100);
         read_fds = master_set;
@@ -169,7 +200,6 @@ int main(int argc, char *argv[])
                         FD_CLR(socket, &read_fds);
                         memset(buffer, 0, HEADER_SIZE + 1);
                         int header_received = recv(socket, buffer, HEADER_SIZE, 0);
-                        printf("\n recv_msg_header: %s len of msg: %d\n", buffer, strlen(buffer)); // DEBUG
                         buffer[HEADER_SIZE] = '\0';
 
                         if (header_received > 0)
@@ -185,7 +215,6 @@ int main(int argc, char *argv[])
                                                       ((uint8_t)buffer[15] << 16) |
                                                       ((uint8_t)buffer[16] << 8) |
                                                       ((uint8_t)buffer[17]);
-                                    printf("\nframe size: %d\n", ptr->frame_size); // DEBUG
                                     ptr->num_packets++;
                                     ptr->send_in_slot = 1; // Mark this server as active in this slot
 
@@ -203,7 +232,6 @@ int main(int argc, char *argv[])
 
                                         // Receive the data portion
                                         ptr->data_size = recv(socket, ptr->data_buffer, ptr->frame_size, 0);
-                                        printf("\n recv_msg: %s len of msg: %d, data_size: %d\n", ptr->data_buffer, strlen(ptr->data_buffer), ptr->data_size); // DEBUG
                                         if (ptr->data_size <= 0)
                                         {
                                             free(ptr->data_buffer);
@@ -247,8 +275,21 @@ int main(int argc, char *argv[])
                                     ptr->avg_bw = 0;
                                 }
                                 printf("Server disconnected, socket: %d\n",ptr->socket);
-                                fprintf(stderr, "\nFrom %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
-                                        ptr->sender_address, ptr->port_num, ptr->num_packets, ptr->total_collisions, ptr->avg_bw);
+                                if (currPrints != headPrints){
+                                    PrintsNode *newPrints = (PrintsNode *)malloc(sizeof(PrintsNode));
+                                    if (!newPrints)
+                                    {
+                                        free(head);
+                                        fprintf(stderr, "Memory allocation failed\n");
+                                        return 1;
+                                    }
+                                    memset(newPrints, 0, sizeof(PrintsNode));
+                                    newPrints->next = NULL;
+                                    currPrints->next = newPrints;
+                                    currPrints = newPrints;
+                                }
+                                log_server_stats(ptr, &currPrints);
+                                
                                 prev->next = ptr->next;
 
                                 if (current == ptr)
@@ -270,10 +311,6 @@ int main(int argc, char *argv[])
                 }
             }
         }
-        // After processing all sockets, check for collisions
-        // int active_count = count_active(head);
-        printf("active count: %d\n", master_set.fd_count); // DEBUG
-
         // Handle collisions or successful transmission
         if (master_set.fd_count > 2) // Collision detected
         {
@@ -292,7 +329,6 @@ int main(int argc, char *argv[])
                     padded_noise = (char *)malloc(ptr->frame_size);
                     memset(padded_noise, 0, ptr->frame_size);
                     memcpy(padded_noise, noise, noise_len);
-                    printf("padded noise: %s\n", padded_noise);
                     SOCKET out_socket = ptr->socket;
                     if (out_socket != tcp_s)
                     {
@@ -320,7 +356,6 @@ int main(int argc, char *argv[])
                         SOCKET out_socket = master_set.fd_array[j];
                         if (out_socket != tcp_s) // Don't send to the listening socket
                         {
-                            printf("\n sent msg : %s len of msg: %d\n", active_ptr->data_buffer, active_ptr->data_size); // DEBUG
                             if (send(out_socket, active_ptr->data_buffer, active_ptr->data_size, 0) == SOCKET_ERROR)
                             {
                                 fprintf(stderr, "Error sending data: %d\n", WSAGetLastError());
@@ -336,14 +371,25 @@ int main(int argc, char *argv[])
 
         // If no active servers (active_count == 0), do nothing
     }
+    print_logs(headPrints);
     closesocket(tcp_s);
     WSACleanup();
     free(c1);
-    free_list(head);
+    free_list_1(head);
+    free_list_2(headPrints);
     return 0;
 }
 
-void free_list(OutputChannel *head)
+void print_logs(PrintsNode *head) {
+    PrintsNode *curr = head;
+    while (curr) {
+        printf("%s", curr->print);
+        curr = curr->next;
+    }
+}
+
+
+void free_list_1(OutputChannel *head)
 {
     OutputChannel *current = head;
     while (current != NULL)
@@ -351,6 +397,17 @@ void free_list(OutputChannel *head)
         OutputChannel *temp = current;
         current = current->next;
         free(temp->sender_address);
+        free(temp);
+    }
+}
+
+void free_list_2(PrintsNode *head)
+{
+    PrintsNode *current = head;
+    while (current != NULL)
+    {
+        PrintsNode *temp = current;
+        current = current->next;
         free(temp);
     }
 }
@@ -386,29 +443,33 @@ int count_active(OutputChannel *head)
     return count;
 }
 
-// DWORD WINAPI monitor_ctrl_z(LPVOID param)
-// {
-//     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-//     INPUT_RECORD inputRecord;
-//     DWORD events;
+void log_server_stats(OutputChannel *ptr, PrintsNode **currPrints) {
+    ptr->end_time = GetTickCount();
+    double elapsed_time = (ptr->end_time - ptr->start_time) / 1000.0;
 
-//     while (!stop_flag)
-//     {
-//         if (ReadConsoleInput(hStdin, &inputRecord, 1, &events))
-//         {
-//             if (inputRecord.EventType == KEY_EVENT &&
-//                 inputRecord.Event.KeyEvent.bKeyDown)
-//             {
-//                 // Detect Ctrl+Z (ASCII 26)
-//                 if (inputRecord.Event.KeyEvent.uChar.AsciiChar == 26)
-//                 {
-//                     stop_flag = 1;
-//                     break;
-//                 }
-//             }
-//         }
-//         Sleep(50); // avoid busy loop
-//     }
+    if (elapsed_time > 0)
+        ptr->avg_bw = (double)(ptr->frame_size * ptr->num_packets * 8) / (elapsed_time * 1000000);
+    else
+        ptr->avg_bw = 0;
 
-//     return 0;
-// }
+    // Create a new log node if not the first
+    if (*currPrints != NULL && (*currPrints)->print[0] != '\0') {
+        PrintsNode *newPrints = (PrintsNode *)malloc(sizeof(PrintsNode));
+        if (!newPrints) {
+            fprintf(stderr, "Memory allocation failed for log node.\n");
+            return;
+        }
+        memset(newPrints, 0, sizeof(PrintsNode));
+        (*currPrints)->next = newPrints;
+        *currPrints = newPrints;
+    }
+
+    snprintf((*currPrints)->print, sizeof((*currPrints)->print),
+             "From %s port %d: %d frames, %d collisions, average bandwidth: %.3f Mbps\n",
+             ptr->sender_address,
+             ptr->port_num,
+             ptr->num_packets,
+             ptr->total_collisions,
+             ptr->avg_bw);
+}
+
