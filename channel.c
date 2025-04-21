@@ -126,7 +126,6 @@ int main(int argc, char *argv[])
             break;
         }        
 
-        Sleep(100);
         read_fds = master_set;
         // Set the timeout for select
         struct timeval timeout;
